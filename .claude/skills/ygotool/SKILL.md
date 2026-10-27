@@ -64,6 +64,7 @@ ygotool/
 24. **特异度没落地（P03）**：「从卡组将等级3怪兽送入墓地」实际命中 339 张（含唯一限定 3星的基路伯），但基路伯排在 126 位、`_render_list` 只给前 15 → LLM 误答"未找到明确限定的卡"。→ `_query_modifiers`（等级/属性/种族）+ 每条结果 `specific` 标记排序 + `_render_list` 分组「★明确限定 / 通用」，精确匹配永远先呈现。
 25. **来源绑定粒度太粗**：「解放手卡」305 张里大量误召（次元魔法：那只怪兽解放，从手卡把…特殊召唤；死皇帝之陵墓：**不用**解放…手卡1只怪兽；念动力脉冲/熔岩龙：手卡出现在其它分句）。→ 新增 `tag_action_units`：cost/效果体各自按连词切动作单元，zone 只在单元内提取；否定词扩到 不用/无需/不需要/不进行；代词句只继承"区域+数量+「目标」"句式（`extract_object_source`）的 zone。search_by_action 改用它。
 26. **查询归一化**：等级3/N星/N星级 → N星；「从卡组」不匹配「额外卡组/融合卡组」（负向断言 `(?<!额外)(?<!融合)卡组`）；source 留空时自动从短语抽 zone 词。
+27. **别名表接线**：`agent/data/aliases.md` 由 `agent/data_loader.load_aliases/apply_aliases` 解析（格式：`- 别名A|别名B: 规范`、`regex: 模式 -> 替换`、`⏸` 开头跳过、`- （` 注释跳过）；`tools._normalize_query` 先跑别名再跑等级正则；`search_by_action/search_by_effect/search_effect_phrase` 入口都归一化。坑：别名 `通常怪→通常怪兽` 会撞已写好的「通常怪兽」变成「怪兽兽」→ 用 `(?!兽)` 负向断言；精确匹配组在 `_render_list` 要列全（上限 30，否则排第 23 位的目标卡 LLM 看不到）。
 
 ## 扩展模式
 - **加工具**：`ToolRuntime` 加方法（返回 `(text, trace)`）→ `agent._prepare` 按意图路由调用 → `trace.tools.append(...)` →（可选）`TOOLS` JSON schema 供原生 function-calling →（可选）`web/server.py` 加 `/api/xxx` 端点 + `app.js` 调用。
