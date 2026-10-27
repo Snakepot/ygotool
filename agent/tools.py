@@ -18,6 +18,7 @@ from ygocdb.store import CardStore
 from ygocdb.codec import decode_card
 from rag.retriever import Retriever
 from rag.chunker import Chunk
+from .data_loader import apply_aliases
 
 
 def _has_active(body: str, terms) -> bool:
@@ -114,23 +115,28 @@ def _zone_in_unit(word: str, text: str) -> bool:
 _LEVEL_RE = re.compile(r"(\d+)星")
 _ATTR_RE = re.compile(r"(光|暗|地|水|炎|风|神)属性")
 _RACE_RE = re.compile(r"(兽战士|魔法师|鸟兽|爬虫类|念动力|幻神兽|创造神|电子界|幻想魔|海龙|战士|天使|恶魔|不死|机械|水生|岩石|植物|昆虫|雷|龙|兽|恐龙|鱼)族")
+# 怪兽类型限定词（"通常怪兽/效果怪兽…"），用于特异度判定
+_TYPE_WORDS = ["通常怪兽", "效果怪兽", "融合怪兽", "仪式怪兽", "同步怪兽",
+               "超量怪兽", "连接怪兽", "灵摆怪兽", "调整怪兽", "二重怪兽",
+               "同盟怪兽", "反转怪兽", "灵魂怪兽"]
 
 
 def _normalize_query(text: str) -> str:
-    """查询归一化：等级N / N星 / N星级 统一成「N星」（卡文常用「N星」）。"""
-    s = text or ""
+    """查询归一化：先按 aliases.md 扩写别名，再把 等级N / N星 / N星级 统一成「N星」。"""
+    s = apply_aliases(text or "")
     s = re.sub(r"等级\s*(\d+)", r"\1星", s)
     s = re.sub(r"星级?\s*(\d+)", r"\1星", s)
     return s
 
 
 def _query_modifiers(phrase: str) -> list[str]:
-    """从用户短语里抽「限定条件」词（等级/属性/种族），用于按特异度排序/分组（P03）。"""
+    """从用户短语里抽「限定条件」词（等级/属性/种族/怪兽类型），用于按特异度排序/分组（P03）。"""
     p = _normalize_query(phrase)
     mods: list[str] = []
     mods += [f"{m}星" for m in _LEVEL_RE.findall(p)]
     mods += [f"{m}属性" for m in _ATTR_RE.findall(p)]
     mods += [f"{m}族" for m in _RACE_RE.findall(p)]
+    mods += [t for t in _TYPE_WORDS if t in p]
     seen, out = set(), []
     for m in mods:
         if m not in seen:
@@ -360,16 +366,16 @@ class ToolRuntime:
         from ygocdb.ontology import map_phrase_to_actions
         SYNS = {"舍弃": "丢弃", "丢弃": "舍弃", "送入墓地": "送去墓地",
                 "送去墓地": "送入墓地", "取对象": "为对象", "为对象": "取对象"}
-        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", keyword or "")
+        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", _normalize_query(keyword or ""))
         if len(clean) < 1 and not (source or target):
             return [], []
 
         # 来源归一（支持「手卡·场上」等组合写法）
-        src_zone = _zone_key(source)
+        src_zone = _zone_key(_normalize_query(source))
 
         # 结构化复合路径：有 source 或 target 就按动作单元匹配
         if src_zone or target:
-            action_keys = set(map_phrase_to_actions(keyword)) if clean else set()
+            action_keys = set(map_phrase_to_actions(_normalize_query(keyword))) if clean else set()
             db = self.store.connect()
             rows = db.execute(
                 "SELECT cid,id,cn_name,sc_name,types,desc,pdesc FROM cards"
@@ -402,7 +408,7 @@ class ToolRuntime:
             return modern, uncertain
 
         # 退化路径：单关键词子串匹配（无 source/target）
-        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", keyword or "")
+        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", _normalize_query(keyword or ""))
         if len(clean) < 2:
             return [], []
         action_terms: set[str] = set()
@@ -476,7 +482,7 @@ class ToolRuntime:
                 return True
             return False
 
-        zone_words = _zone_words(source) or _zone_words_in_phrase(p)
+        zone_words = _zone_words(_normalize_query(source)) or _zone_words_in_phrase(p)
         mods = _query_modifiers(p)
 
         db = self.store.connect()
@@ -605,9 +611,10 @@ class ToolRuntime:
             spec = [c for c in modern + uncertain if c.get("specific")]
             gen_m = [c for c in modern if not c.get("specific")]
             gen_u = [c for c in uncertain if not c.get("specific")]
+            SPEC_SAMPLE = 30  # 精确匹配是"答案"，尽量列全
             lines.append(f"★ 明确限定「{'、'.join(mods)}」的卡（优先呈现）：")
             if spec:
-                for c in spec[:SAMPLE]:
+                for c in spec[:SPEC_SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
             else:
                 lines.append("（本批结果里没有明确限定该条件的卡，以下为通用卡）")
@@ -619,7 +626,7 @@ class ToolRuntime:
                 lines.append("【通用·未确认(90X前旧措辞,须查FAQ)】:")
                 for c in gen_u[:SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
-            shown = len(spec[:SAMPLE]) + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE])
+            shown = len(spec[:SPEC_SAMPLE]) + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE])
             if total > shown:
                 lines.append(f"（其余 {total - shown} 张见左栏完整名单）")
         else:

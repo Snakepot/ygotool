@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -114,3 +115,69 @@ def eval_cases(cases: list[dict] | None, exclude_ids: set[str] | None = None
         cases = load_cases()
     excl = exclude_ids or set()
     return [c for c in cases if c["id"] not in excl]
+
+
+# ---- 别名表（aliases.md）：把自然语言说法扩写成规范写法，仅用于检索匹配 ----
+_aliases_cache: dict | None = None
+
+
+def load_aliases(path: Path | str | None = None) -> dict:
+    """解析 aliases.md。返回 {"literal": [(别名, 规范), ...], "regex": [(正则, 替换), ...]}。
+
+    格式（见 agent/data/aliases.md）：
+      - 别名A|别名B: 规范写法
+      - regex: 正则 -> 替换   （替换里 \\1 表示捕获组）
+    以 ⏸ 开头的行 = 暂不纳入（定义模糊），跳过；以「- （」开头的注释行跳过。
+    """
+    p = Path(path) if path else (DATA_DIR / "aliases.md")
+    literal: list[tuple[str, str]] = []
+    regex: list[tuple[str, str]] = []
+    if not p.is_file():
+        return {"literal": literal, "regex": regex}
+    for line in p.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s.startswith("- "):
+            continue
+        s = s[2:].strip()
+        if not s or s.startswith("⏸") or s.startswith("（") or s.startswith("("):
+            continue
+        if s.startswith("regex:"):
+            m = re.match(r"regex:\s*(.+?)\s*->\s*(.+)$", s)
+            if not m:
+                continue
+            pat, repl = m.group(1), m.group(2)
+            try:
+                re.compile(pat)
+            except re.error:
+                continue
+            regex.append((pat, repl))
+            continue
+        if ":" not in s:
+            continue
+        left, _, right = s.partition(":")
+        aliases = [a.strip() for a in left.split("|") if a.strip()]
+        canon = right.strip()
+        if aliases and canon:
+            literal.extend((a, canon) for a in aliases)
+    return {"literal": literal, "regex": regex}
+
+
+def apply_aliases(text: str) -> str:
+    """把用户说法扩写为规范写法（只用于检索匹配，不改变原文展示）。"""
+    global _aliases_cache
+    if _aliases_cache is None:
+        _aliases_cache = load_aliases()
+    s = text or ""
+    # 先做别名替换（长别名优先），再跑正则规则（如 4星怪→4星怪兽）
+    for a, canon in sorted(_aliases_cache["literal"], key=lambda x: len(x[0]), reverse=True):
+        if a.endswith("怪") and canon.endswith("怪兽"):
+            # 避免「通常怪」把已写好的「通常怪兽」再补成「通常怪兽兽」
+            s = re.sub(re.escape(a) + r"(?!兽)", canon, s)
+        elif a in s:
+            s = s.replace(a, canon)
+    for pat, repl in _aliases_cache["regex"]:
+        try:
+            s = re.sub(pat, repl, s)
+        except re.error:
+            pass
+    return s

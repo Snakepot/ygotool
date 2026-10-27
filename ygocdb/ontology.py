@@ -175,6 +175,8 @@ def map_phrase_to_actions(phrase: str) -> list[str]:
         hits.append("banish")
     if "抽" in p and "卡" in p:
         hits.append("draw")
+    if "加入手卡" in p or "加入手牌" in p or "检索" in p:
+        hits.append("add_to_hand")
     if "特殊召唤" in p or "特召" in p:
         hits.append("special_summon")
     if "丢弃" in p and not hits:
