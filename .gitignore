@@ -28,3 +28,5 @@ eval/result.csv
 # ---- 系统 ----
 .DS_Store
 Thumbs.db
+# Word 临时锁文件
+~$*
