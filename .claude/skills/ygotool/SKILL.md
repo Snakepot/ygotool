@@ -61,6 +61,9 @@ ygotool/
 21. **deck 分支 `hits` 未绑定**：`hits` 只在 `if not list_answered:` 内赋值，候选卡循环却写在外 → 枚举意图命中时 `UnboundLocalError`。→ 循环收进同一守卫内。
 22. **本体缺「解放」（tribute）等高频动作**：用户粘贴原文「把自己的手卡·场上1只怪兽解放才能发动」→ `search_by_action` 映射为空返回 0；子串兜底又给 3509 张噪音。→ ontology 补 `release` 动作 + `map_phrase_to_actions` 认 解放/献祭/祭品；`tag_actions` 跳过否定句并新增完整条款 `clause` 字段；`search_by_action` 加 `source` 过滤（组合来源如「手卡·场上」要求区域词都出现）。
 23. **粘贴原文找不到卡**：子串/词条匹配搞不定整句措辞。→ 新增 `search_effect_phrase(phrase)`：原文与效果文本同样规范化（去标点）后按最长连续匹配（≥4 字）+ 4 字片段覆盖率排序，cost 段参与匹配；REACT_RULE 教模型「原文→动作+来源，cost 在才能发动前」。
+24. **特异度没落地（P03）**：「从卡组将等级3怪兽送入墓地」实际命中 339 张（含唯一限定 3星的基路伯），但基路伯排在 126 位、`_render_list` 只给前 15 → LLM 误答"未找到明确限定的卡"。→ `_query_modifiers`（等级/属性/种族）+ 每条结果 `specific` 标记排序 + `_render_list` 分组「★明确限定 / 通用」，精确匹配永远先呈现。
+25. **来源绑定粒度太粗**：「解放手卡」305 张里大量误召（次元魔法：那只怪兽解放，从手卡把…特殊召唤；死皇帝之陵墓：**不用**解放…手卡1只怪兽；念动力脉冲/熔岩龙：手卡出现在其它分句）。→ 新增 `tag_action_units`：cost/效果体各自按连词切动作单元，zone 只在单元内提取；否定词扩到 不用/无需/不需要/不进行；代词句只继承"区域+数量+「目标」"句式（`extract_object_source`）的 zone。search_by_action 改用它。
+26. **查询归一化**：等级3/N星/N星级 → N星；「从卡组」不匹配「额外卡组/融合卡组」（负向断言 `(?<!额外)(?<!融合)卡组`）；source 留空时自动从短语抽 zone 词。
 
 ## 扩展模式
 - **加工具**：`ToolRuntime` 加方法（返回 `(text, trace)`）→ `agent._prepare` 按意图路由调用 → `trace.tools.append(...)` →（可选）`TOOLS` JSON schema 供原生 function-calling →（可选）`web/server.py` 加 `/api/xxx` 端点 + `app.js` 调用。

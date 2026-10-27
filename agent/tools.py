@@ -90,6 +90,55 @@ def _zone_words(source: str) -> list[str]:
     return [t for t in _zone_tokens(source) if t in SRC]
 
 
+def _zone_words_in_phrase(phrase: str) -> list[str]:
+    """从自然语言短语里找区域词（如"解放手卡"→手卡、"从卡组送去墓地"→卡组）。"""
+    out: list[str] = []
+    for w in sorted(SRC, key=len, reverse=True):
+        if w == "卡组":
+            if re.search(r"(?<!额外)(?<!融合)卡组", phrase or ""):
+                out.append(w)
+        elif w in (phrase or ""):
+            out.append(w)
+    return out
+
+
+def _zone_in_unit(word: str, text: str) -> bool:
+    """zone 词是否出现在动作单元里。卡组要排除「额外卡组/融合卡组」（P04：卡组≠额外卡组）。"""
+    if not word or not text:
+        return False
+    if word == "卡组":
+        return re.search(r"(?<!额外)(?<!融合)卡组", text) is not None
+    return word in text
+
+
+_LEVEL_RE = re.compile(r"(\d+)星")
+_ATTR_RE = re.compile(r"(光|暗|地|水|炎|风|神)属性")
+_RACE_RE = re.compile(r"(兽战士|魔法师|鸟兽|爬虫类|念动力|幻神兽|创造神|电子界|幻想魔|海龙|战士|天使|恶魔|不死|机械|水生|岩石|植物|昆虫|雷|龙|兽|恐龙|鱼)族")
+
+
+def _normalize_query(text: str) -> str:
+    """查询归一化：等级N / N星 / N星级 统一成「N星」（卡文常用「N星」）。"""
+    s = text or ""
+    s = re.sub(r"等级\s*(\d+)", r"\1星", s)
+    s = re.sub(r"星级?\s*(\d+)", r"\1星", s)
+    return s
+
+
+def _query_modifiers(phrase: str) -> list[str]:
+    """从用户短语里抽「限定条件」词（等级/属性/种族），用于按特异度排序/分组（P03）。"""
+    p = _normalize_query(phrase)
+    mods: list[str] = []
+    mods += [f"{m}星" for m in _LEVEL_RE.findall(p)]
+    mods += [f"{m}属性" for m in _ATTR_RE.findall(p)]
+    mods += [f"{m}族" for m in _RACE_RE.findall(p)]
+    seen, out = set(), []
+    for m in mods:
+        if m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
 def _lcs_best(a: str, b: str) -> tuple[int, int]:
     """a 与 b 的最长公共连续子串：(长度, 在 b 中的起始位置)。用于"原文片段"检索打分。"""
     best, bpos = 0, 0
@@ -391,21 +440,24 @@ class ToolRuntime:
         """按裁定动作本体全量搜（§五 #2，search_by_effect 的结构化升级版）。
 
         把用户短语映射到 canonical 动作（discard_hand/send_deck_to_gy/...），
-        用 tag_actions 给每张卡的效果打标，命中即收录。reason 过滤：
+        用 tag_action_units 按「动作单元」打标（来源/目标只在同一单元内绑定），命中即收录。
+        reason 过滤：
         - reason='cost'  只命中 cost 段（"作为cost丢弃"）
         - reason='effect' 只命中效果段（"效果处理时丢弃"）
         - None 按短语自检测（短语含 cost/代价→cost；含效果处理/作为效果→effect；否则都要）
-        - source='手卡·场上' 只保留命中片段里含该区域词的（用于"从手卡解放"这类来源限定）
-        opponent 轴（因对方离开场上）始终不受 cost/effect 过滤。
+        - source='手卡·场上' 只保留同一动作单元里含该区域词的（用于"从手卡解放"这类来源限定）；
+          source 留空时自动从短语里取区域词（"从卡组…"→卡组）。
+        ★ 特异度（P03）：短语里的限定条件（等级3 / 3星 / 暗属性 / 龙族…）会标到命中的卡上，
+          结果按 specific 优先排序——明确限定用户条件的卡排最前。
         每条结果带 snippet（命中的原文片段），供 LLM/前端展示"为何命中"，避免严格 grounding 下拒答。
         返回 (现代档, 未确认旧措辞档)。短语无法映射→([], [])，调用方回退 search_by_effect。
         """
         from ygocdb.ontology import map_phrase_to_actions
-        from ygocdb.effect_parser import tag_actions, is_structured
-        keys = map_phrase_to_actions(phrase)
+        from ygocdb.effect_parser import tag_action_units, is_structured
+        p = _normalize_query(phrase or "")
+        keys = map_phrase_to_actions(p)
         if not keys:
             return [], []
-        p = phrase or ""
         if reason is None:
             want_cost = any(w in p for w in ("cost", "代价", "作为cost"))
             want_effect = any(w in p for w in ("效果处理", "作为效果", "效果时")) and not want_cost
@@ -424,32 +476,40 @@ class ToolRuntime:
                 return True
             return False
 
+        zone_words = _zone_words(source) or _zone_words_in_phrase(p)
+        mods = _query_modifiers(p)
+
         db = self.store.connect()
         rows = db.execute(
             "SELECT cid,id,cn_name,sc_name,types,desc,pdesc FROM cards"
         ).fetchall()
-        zone_words = _zone_words(source)
         modern: list[dict] = []
         uncertain: list[dict] = []
         for r in rows:
             desc = r["desc"] or ""
             pdesc = r["pdesc"] or ""
-            tags = tag_actions(desc, pdesc)
+            tags = tag_action_units(desc, pdesc)
             matched = [t for t in tags if t["action"] in keys and reason_ok(t["reason"])]
             if zone_words:
-                # 组合来源（如 手卡·场上）要求条款里列出的区域词都出现；
-                # 单一来源（如 手卡）只要求该词出现。
+                # 组合来源（如 手卡·场上）要求单元里列出的区域词都出现
                 matched = [t for t in matched
-                           if all(w in (t.get("clause") or t["snippet"]) for w in zone_words)]
+                           if all(_zone_in_unit(w, t.get("clause") or "") for w in zone_words)]
             if not matched:
                 continue
+            t = matched[0]
+            specific = bool(mods) and any(
+                all(m in (u.get("clause") or "") for m in mods) for u in matched)
             entry = {"id": r["id"], "cn_name": r["cn_name"],
                      "types": ((r["types"] or "").splitlines() or [""])[0],
-                     "snippet": matched[0]["snippet"]}  # 命中片段，给 LLM 看依据
+                     "snippet": t["snippet"], "specific": specific,
+                     "reason": t["reason"]}
             if is_structured(desc) or is_structured(pdesc):
                 modern.append(entry)
             else:
                 uncertain.append(entry)
+        # 特异度优先：明确限定用户条件的卡排最前（P03：精确匹配 > 泛泛满足）
+        modern.sort(key=lambda c: 0 if c["specific"] else 1)
+        uncertain.sort(key=lambda c: 0 if c["specific"] else 1)
         return modern, uncertain
 
     def search_effect_phrase(self, phrase: str, top: int = 20
@@ -463,7 +523,7 @@ class ToolRuntime:
         同分时按 4 字片段覆盖率二排，精确措辞的卡排最前。
         返回按匹配长度降序的 top N，每条带命中片段，供 LLM 核对"原文确实这么写"。
         """
-        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", phrase or "")
+        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", _normalize_query(phrase or ""))
         if len(clean) < 3:
             return [], clean
         grams3 = {clean[i:i + 3] for i in range(len(clean) - 2)}
@@ -533,22 +593,44 @@ class ToolRuntime:
 
     @staticmethod
     def _render_list(name: str, modern: list, uncertain: list, args: dict) -> str:
-        SAMPLE = 15
+        SAMPLE = 10
         reason = args.get("reason")
-        hdr = (f"按动作「{args.get('phrase','')}」" + (f"(仅{reason}段)" if reason else "")
-               if name == "search_by_action" else f"按效果「{args.get('keyword','')}」")
-        lines = [f"{hdr} 共匹配 {len(modern)+len(uncertain)} 张"
-                 f"（现代{len(modern)}+未确认{len(uncertain)}），下面列前 {SAMPLE} 样例（完整名单见左栏搜索）："]
-        if modern:
-            lines.append("【现代】:")
-            for c in modern[:SAMPLE]:
-                snip = c.get("snippet", "") if name == "search_by_action" else ""
-                lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {snip}".rstrip())
-        if uncertain:
-            lines.append("【未确认(90X前旧措辞,须查FAQ)】:")
-            for c in uncertain[:SAMPLE]:
-                snip = c.get("snippet", "") if name == "search_by_action" else ""
-                lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {snip}".rstrip())
+        phrase = args.get("phrase", "") if name == "search_by_action" else args.get("keyword", "")
+        hdr = (f"按动作「{phrase}」" + (f"(仅{reason}段)" if reason else "")
+               if name == "search_by_action" else f"按效果「{phrase}」")
+        mods = _query_modifiers(phrase)
+        total = len(modern) + len(uncertain)
+        lines = [f"{hdr} 共匹配 {total} 张（现代{len(modern)}+未确认{len(uncertain)}）。"]
+        if mods:
+            spec = [c for c in modern + uncertain if c.get("specific")]
+            gen_m = [c for c in modern if not c.get("specific")]
+            gen_u = [c for c in uncertain if not c.get("specific")]
+            lines.append(f"★ 明确限定「{'、'.join(mods)}」的卡（优先呈现）：")
+            if spec:
+                for c in spec[:SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            else:
+                lines.append("（本批结果里没有明确限定该条件的卡，以下为通用卡）")
+            if gen_m:
+                lines.append("【通用（未限定该条件，可自由选择对象/目标）】现代:")
+                for c in gen_m[:SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            if gen_u:
+                lines.append("【通用·未确认(90X前旧措辞,须查FAQ)】:")
+                for c in gen_u[:SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            shown = len(spec[:SAMPLE]) + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE])
+            if total > shown:
+                lines.append(f"（其余 {total - shown} 张见左栏完整名单）")
+        else:
+            if modern:
+                lines.append("【现代】:")
+                for c in modern[:SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            if uncertain:
+                lines.append("【未确认(90X前旧措辞,须查FAQ)】:")
+                for c in uncertain[:SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
         return "\n".join(lines)
 
     @staticmethod
@@ -598,7 +680,7 @@ TOOLS = [
         "description": "按裁定动作全量找卡（用户问'有哪些/列出 cost包含X 的卡'，X是动作如 舍弃手卡/从卡组送去墓地/破坏/除外/解放/因对方离开场上）。"
                         "动作短语不必与原文逐字一致：'解放手卡怪兽' 与 '把自己的手卡·场上1只怪兽解放才能发动' 都归为动作 解放。"
                         "可按 reason 过滤：cost=只查作为发动代价的（原文'才能发动'之前）；effect=只查效果处理时的。"
-                        "可用 source 限定来源区域（如 手卡/场上/手卡·场上/卡组/墓地）。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
+                        "可用 source 限定来源区域（如 手卡/场上/手卡·场上/卡组/墓地）；source 留空时自动从短语解析。结果按特异度分组：明确限定用户条件（等级/属性/种族/来源）的卡会标「★明确限定」并优先列出。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
         "parameters": {"type": "object",
                        "properties": {"phrase": {"type": "string", "description": "动作短语，如 解放手卡 / 从卡组送去墓地 / 破坏"},
                                       "reason": {"type": "string", "enum": ["cost", "effect"],
