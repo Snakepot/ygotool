@@ -1,0 +1,15 @@
+# 判例库（案例法）—— 一行一 JSON。同一套数据双重用途：
+#   fewshot=true  → 进 prompt 当 ReAct 示例（教格式）
+#   全部          → 当评测判例（harness 自动剔除当轮注入的 fewshot，防泄漏）
+# 字段：id/task/q/cards/ruling/principles/must_cite/source/fewshot
+#   ruling    = 标准答（fewshot 渲染成 A，eval 当 golden）
+#   principles= 套用原则 id（链 principles.md）
+#   must_cite = 答案必须引用的来源（原则 id 或 "卡#<id>"）—— eval 自动核查
+# 注意：字符串内的引号一律用「」中文引号，别用 ASCII 双引号（会破坏 JSON）。
+# 示例条目（请按你的自然语言稿改写扩充）：
+
+{"id":"C01","task":"ruling","q":"魔力净化丢弃手卡会触发「被效果丢弃去墓地」的效果吗？","cards":["魔力净化"],"ruling":"不会。魔力净化的「丢弃1张手卡」是发动cost（「才能发动」前），cost不视为效果处理，故不满足「被效果丢弃去墓地」的触发。","principles":["P01"],"must_cite":["P01"],"source":"原则P01+魔力净化文本","fewshot":true}
+
+{"id":"C02","task":"ruling","q":"刻魔的咏圣丢弃手卡会触发暗黑界的效果吗？","cards":["刻魔的咏圣","暗黑界之雷文"],"ruling":"会。刻魔的咏圣的丢弃发生在效果处理时（「才能发动」之后），属「被效果丢弃去墓地」，满足暗黑界触发。","principles":["P01","P02"],"must_cite":["P01"],"source":"原则P01/P02","fewshot":true}
+
+{"id":"C03","task":"search","q":"青眼白龙是什么卡？","cards":["青眼白龙"],"ruling":"青眼白龙(id=89631139) 龙族/光/通常怪兽 ATK3000/DEF2500。来源：卡牌#89631139","principles":[],"must_cite":["89631139"],"source":"cards.db","fewshot":true}
