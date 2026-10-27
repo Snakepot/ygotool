@@ -189,3 +189,69 @@ def parse_action_units(desc: str | None, pdesc: str | None = None,
 
 # 兼容旧引用
 CLAUSE_SPLIT = CLAUSE_MARK
+
+# 动作单元内的代词指代（PSCT 常见：取对象句声明目标，动作句用"那只怪兽"指代）
+_ANAPHORA = re.compile(r"那只|这只|那张|这张|该怪兽|该卡|这只怪兽|那只怪兽")
+# 否定/限制词：动作单元含这些词表示"不允许做"，不是该卡执行的动作
+_NEG_RE = re.compile(r"不能|无法|不可|不得|不可以|不用|无需|不需要|不进行|未进行")
+
+
+def tag_action_units(desc: str | None, pdesc: str | None = None
+                     ) -> list[dict]:
+    """按 PSCT 动作单元打标（search_by_action 专用）：来源/目标只在同一动作单元内绑定。
+
+    与 tag_actions 的区别：tag_actions 以"整条款"为单位打标，条款里任意位置出现 zone 词
+    都可能被当成来源（如"那只怪兽解放，从手卡把…特殊召唤"中手卡属于特殊召唤，却会被误绑到
+    解放）；本函数按连词（那之后/并且/此外/，/。）把 cost/效果体切成动作单元，zone/目标只在
+    该单元内提取，并跳过否定/限制单元（不能/无法/不可/不得/不用/无需/不需要…）。
+    cost 段标 reason=cost，效果体标 reason=effect；无 PSCT 结构的旧卡标 uncertain。
+    返回 [{action,label,source,reason,clause_idx,section,snippet,clause,targets}]。
+    """
+    from .ontology import (match_actions, _BY_KEY, extract_source,
+                            extract_object_source, extract_targets,
+                            split_action_segments)
+    out: list[dict] = []
+    sections: list[tuple[str, str]] = []
+    if pdesc:
+        sections.append(("灵摆效果", pdesc))
+    if desc:
+        sections.append(("怪兽效果", desc))
+    for sec_name, text in sections:
+        structured = is_structured(text)
+        clauses = parse_clauses(text)
+        for idx, (clause_full, body) in enumerate(clauses):
+            clause_targets = extract_targets(clause_full)
+            # 代词指代句继承的目标来源：只认"区域+数量+「目标」"这种绑定句式的 zone，
+            # 不退回 extract_source（否则会把条款里别处出现的区域词误当来源，如次元魔法）
+            clause_source = extract_object_source(clause_full)
+            cost_text, _body = _cost_body(clause_full)
+            for seg, reason in ((cost_text, "cost"), (body, "effect")):
+                if not seg:
+                    continue
+                for unit in split_action_segments(seg):
+                    if not unit.strip() or _NEG_RE.search(unit):
+                        continue
+                    acts = match_actions(unit)
+                    if not acts:
+                        continue
+                    src = extract_object_source(unit) or extract_source(unit)
+                    tgts = extract_targets(unit)
+                    if _ANAPHORA.search(unit):
+                        if not src:
+                            src = clause_source
+                        if not tgts:
+                            tgts = clause_targets
+                    for key in acts:
+                        a = _BY_KEY.get(key)
+                        if not a:
+                            continue
+                        out.append({
+                            "action": key, "label": a.label,
+                            "source": src or a.source,
+                            "reason": "uncertain" if not structured else reason,
+                            "clause_idx": idx, "section": sec_name,
+                            "snippet": unit.strip()[:60].replace("\n", " "),
+                            "clause": unit.strip()[:120].replace("\n", " "),
+                            "targets": tgts,
+                        })
+    return out
