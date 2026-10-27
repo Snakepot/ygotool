@@ -376,6 +376,7 @@ class ToolRuntime:
         # 结构化复合路径：有 source 或 target 就按动作单元匹配
         if src_zone or target:
             action_keys = set(map_phrase_to_actions(_normalize_query(keyword))) if clean else set()
+            mods = _query_modifiers(" ".join([keyword or "", source or "", target or ""]))
             db = self.store.connect()
             rows = db.execute(
                 "SELECT cid,id,cn_name,sc_name,types,desc,pdesc FROM cards"
@@ -398,13 +399,17 @@ class ToolRuntime:
                     break
                 if not hit_unit:
                     continue
+                specific = bool(mods) and all(m in hit_unit["snippet"] for m in mods)
                 entry = {"id": r["id"], "cn_name": r["cn_name"],
                          "types": ((r["types"] or "").splitlines() or [""])[0],
-                         "snippet": hit_unit["snippet"]}
+                         "snippet": hit_unit["snippet"], "specific": specific}
                 if is_structured(desc) or is_structured(pdesc):
                     modern.append(entry)
                 else:
                     uncertain.append(entry)
+            # 特异度优先（P03），与 search_by_action 一致
+            modern.sort(key=lambda c: 0 if c["specific"] else 1)
+            uncertain.sort(key=lambda c: 0 if c["specific"] else 1)
             return modern, uncertain
 
         # 退化路径：单关键词子串匹配（无 source/target）
@@ -601,9 +606,13 @@ class ToolRuntime:
     def _render_list(name: str, modern: list, uncertain: list, args: dict) -> str:
         SAMPLE = 10
         reason = args.get("reason")
-        phrase = args.get("phrase", "") if name == "search_by_action" else args.get("keyword", "")
-        hdr = (f"按动作「{phrase}」" + (f"(仅{reason}段)" if reason else "")
-               if name == "search_by_action" else f"按效果「{phrase}」")
+        if name == "search_by_action":
+            phrase = args.get("phrase", "")
+            hdr = f"按动作「{phrase}」" + (f"(仅{reason}段)" if reason else "")
+        else:
+            phrase = " ".join([args.get("keyword", ""), args.get("source", ""),
+                               args.get("target", "")]).strip()
+            hdr = f"按效果「{args.get('keyword','')}」"
         mods = _query_modifiers(phrase)
         total = len(modern) + len(uncertain)
         lines = [f"{hdr} 共匹配 {total} 张（现代{len(modern)}+未确认{len(uncertain)}）。"]
@@ -700,6 +709,7 @@ TOOLS = [
         "description": "按效果找卡。复合查询传 source/target 走结构化匹配（动作∧来源∧目标绑同一效果单元，精度高）："
                         "如『从卡组特殊召唤阿不思的落胤的卡』→ keyword=特殊召唤, source=卡组, target=阿不思的落胤。"
                         "source 可选值：卡组/手卡/墓地/额外卡组/场上/除外。target 是卡名片段。"
+                        "结果同样按特异度排序：明确限定用户条件（等级/属性/种族/怪兽类型）的卡优先。"
                         "不传 source/target 退化为单关键词子串匹配。返回现代+未确认两档名单（带命中片段）。",
         "parameters": {"type": "object",
                        "properties": {"keyword": {"type": "string", "description": "动作/效果关键词，如 特殊召唤/送去墓地/加入手卡"},

@@ -352,13 +352,13 @@ class CardAgent:
                                     content="(已达工具调用上限，请基于已获取信息直接给出最终回复，不要再调工具)"))
         else:
             answer = ""
-        # 若撞了上限但循环耗尽没出文字答，补一次无 tools 调用逼模型收尾
-        if not answer and force_final:
+        # 循环耗尽（模型一直调工具没收敛）或撞上限：补一次无 tools 调用逼出最终答
+        if not answer:
+            msgs.append(Message(role="user",
+                                content="(已达到工具调用轮数上限，请基于已获取信息直接给出最终回复，不要再调工具)"))
             res = self.llm.chat(msgs, temperature=temp, max_tokens=mt, thinking=th, tools=None)
             for key in usage:
                 usage[key] += res.usage.get(key, 0)
-            answer = res.text or "(工具调用达上限，未能完成推理)"
-        elif not answer:
             answer = res.text or "(工具调用达上限，未能完成推理)"
         trace.llm_usage = usage
         trace.answer = answer

@@ -98,6 +98,8 @@ REACT_RULE = (
     "**禁止先猜卡名再逐个 get_card_detail 核实**——那会漏卡且费时，应让 search_by_effect 按效果体全量找；"
     "用户给了限定条件（等级3/3星、暗属性、龙族等）时，工具会把明确限定这些条件的卡标为「★明确限定」并优先列出："
     "回答时先给精确匹配，再列通用卡（P03 特异度优先）；用户没限定「效果」时，cost 卡也算；"
+    "带来源/限定条件（从卡组…、N星、属性、种族、通常怪兽等）的找卡**优先用 search_by_action**（自带精确/通用分组）；"
+    "若用 search_by_effect，把限定词写进 keyword 或 target，并把 source 一起传；"
     "3) 查单卡信息：search_card 一次拿到 id 即可，需要效果原文再 get_card_detail 一次，**同一张卡不重复取**；"
     "4) 裁定问答：search_card/get_card_detail 取涉及卡效果 + rag_search 找官方 FAQ（rag_search 最多调 2 次），"
     "再结合原则演绎；"
