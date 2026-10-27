@@ -154,16 +154,17 @@ def api_effect_search(q: str = Query(...)):
 
 
 @app.get("/api/action-search")
-def api_action_search(q: str = Query(...), reason: str = ""):
-    """按裁定动作本体全量搜（§五 #2），支持 cost/effect 过滤。供浏览面板。
+def api_action_search(q: str = Query(...), reason: str = "", source: str = ""):
+    """按裁定动作本体全量搜（§五 #2），支持 cost/effect 过滤 + 来源限定。供浏览面板。
     reason=cost 只命中 cost 段；reason=effect 只命中效果段；空则都要。
+    source 如 手卡/场上/手卡·场上，按命中片段过滤。
     无 reason 且本体未命中→回退 search_by_effect（子串兜底，覆盖未映射措辞）。
     返回 mode 标明命中路径（action/effect），供前端显示。
     """
     from agent.tools import ToolRuntime
     rt = ToolRuntime(store)
     rf = reason if reason in ("cost", "effect") else None
-    modern, uncertain = rt.search_by_action(q, reason=rf)
+    modern, uncertain = rt.search_by_action(q, reason=rf, source=source)
     mode = "action"
     if not (modern or uncertain) and not rf:
         modern, uncertain = rt.search_by_effect(q)

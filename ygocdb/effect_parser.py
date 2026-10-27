@@ -89,6 +89,9 @@ def tag_actions(desc: str | None, pdesc: str | None = None,
             for seg, reason in ((cost_text, "cost"), (body_text, "effect")):
                 if not seg:
                     continue
+                # 跳过否定/限制句（不能/无法/不可…）：那是"不允许做"，不是该卡执行的动作
+                if re.search(r"不能|无法|不可|不得|不可以", seg):
+                    continue
                 for key in match_actions(seg):
                     a = _BY_KEY.get(key)
                     if not a:
@@ -101,6 +104,7 @@ def tag_actions(desc: str | None, pdesc: str | None = None,
                         "reason": final_reason, "clause_idx": idx,
                         "section": sec_name,
                         "snippet": seg[:40].replace("\n", " "),
+                        "clause": seg[:120].replace("\n", " "),
                     })
     # 去重（同 action+reason+clause 只留一条）
     seen, dedup = set(), []
