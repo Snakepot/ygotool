@@ -10,6 +10,7 @@ Agent 用确定性管线调用工具、把结果作为上下文喂给 LLM 综合
 """
 from __future__ import annotations
 import json
+import re
 from typing import Any
 
 from config import Settings
@@ -59,6 +60,49 @@ def _fmt_decode(dec: dict) -> str:
     return (f"属性{join(dec.get('attribute'))} 种族{join(dec.get('race'))} "
             f"类型{join(dec.get('type'))} {lv} ATK{dec.get('atk','—')} DEF{dec.get('def','—')} "
             f"setcode{join(dec.get('setcode'))}")
+
+
+# ---- 来源（zone）词表与归一（search_by_effect / search_by_action 共用）----
+SRC = {"卡组": "deck", "手卡": "hand", "手牌": "hand", "手札": "hand",
+       "墓地": "gy", "额外卡组": "extra", "额外": "extra", "融合卡组": "extra",
+       "场上": "field", "除外": "banished", "除外区": "banished"}
+
+
+def _zone_tokens(source: str) -> list[str]:
+    """把「手卡·场上」「手卡/墓地」等组合来源拆成 zone 词列表。"""
+    s = re.sub(r"[·/、,，和及\s]+", " ", source or "")
+    return [t for t in s.split(" ") if t]
+
+
+def _zone_key(source: str) -> str:
+    """来源短语 → 第一个可识别的 zone key（结构化检索用单 zone 语义）。"""
+    for t in _zone_tokens(source):
+        if t in SRC:
+            return SRC[t]
+    for k in SRC:
+        if k and k in (source or ""):
+            return SRC[k]
+    return ""
+
+
+def _zone_words(source: str) -> list[str]:
+    """来源短语 → 原文片段里可搜索的 zone 词（search_by_action 的 snippet 过滤用）。"""
+    return [t for t in _zone_tokens(source) if t in SRC]
+
+
+def _lcs_best(a: str, b: str) -> tuple[int, int]:
+    """a 与 b 的最长公共连续子串：(长度, 在 b 中的起始位置)。用于"原文片段"检索打分。"""
+    best, bpos = 0, 0
+    prev = [0] * (len(b) + 1)
+    for ca in a:
+        cur = [0] * (len(b) + 1)
+        for j, cb in enumerate(b):
+            if ca == cb:
+                cur[j + 1] = prev[j] + 1
+                if cur[j + 1] > best:
+                    best, bpos = cur[j + 1], j + 1 - cur[j + 1]
+        prev = cur
+    return best, bpos
 
 
 class ToolRuntime:
@@ -271,11 +315,8 @@ class ToolRuntime:
         if len(clean) < 1 and not (source or target):
             return [], []
 
-        # 来源归一
-        SRC = {"卡组": "deck", "手卡": "hand", "手牌": "hand", "手札": "hand",
-               "墓地": "gy", "额外卡组": "extra", "额外": "extra", "融合卡组": "extra",
-               "场上": "field", "除外": "banished", "除外区": "banished"}
-        src_zone = SRC.get((source or "").strip(), "")
+        # 来源归一（支持「手卡·场上」等组合写法）
+        src_zone = _zone_key(source)
 
         # 结构化复合路径：有 source 或 target 就按动作单元匹配
         if src_zone or target:
@@ -345,8 +386,8 @@ class ToolRuntime:
                 uncertain.append(entry)
         return modern, uncertain
 
-    def search_by_action(self, phrase: str, reason: str | None = None
-                        ) -> tuple[list[dict], list[dict]]:
+    def search_by_action(self, phrase: str, reason: str | None = None,
+                         source: str = "") -> tuple[list[dict], list[dict]]:
         """按裁定动作本体全量搜（§五 #2，search_by_effect 的结构化升级版）。
 
         把用户短语映射到 canonical 动作（discard_hand/send_deck_to_gy/...），
@@ -354,6 +395,7 @@ class ToolRuntime:
         - reason='cost'  只命中 cost 段（"作为cost丢弃"）
         - reason='effect' 只命中效果段（"效果处理时丢弃"）
         - None 按短语自检测（短语含 cost/代价→cost；含效果处理/作为效果→effect；否则都要）
+        - source='手卡·场上' 只保留命中片段里含该区域词的（用于"从手卡解放"这类来源限定）
         opponent 轴（因对方离开场上）始终不受 cost/effect 过滤。
         每条结果带 snippet（命中的原文片段），供 LLM/前端展示"为何命中"，避免严格 grounding 下拒答。
         返回 (现代档, 未确认旧措辞档)。短语无法映射→([], [])，调用方回退 search_by_effect。
@@ -386,6 +428,7 @@ class ToolRuntime:
         rows = db.execute(
             "SELECT cid,id,cn_name,sc_name,types,desc,pdesc FROM cards"
         ).fetchall()
+        zone_words = _zone_words(source)
         modern: list[dict] = []
         uncertain: list[dict] = []
         for r in rows:
@@ -393,6 +436,11 @@ class ToolRuntime:
             pdesc = r["pdesc"] or ""
             tags = tag_actions(desc, pdesc)
             matched = [t for t in tags if t["action"] in keys and reason_ok(t["reason"])]
+            if zone_words:
+                # 组合来源（如 手卡·场上）要求条款里列出的区域词都出现；
+                # 单一来源（如 手卡）只要求该词出现。
+                matched = [t for t in matched
+                           if all(w in (t.get("clause") or t["snippet"]) for w in zone_words)]
             if not matched:
                 continue
             entry = {"id": r["id"], "cn_name": r["cn_name"],
@@ -403,6 +451,49 @@ class ToolRuntime:
             else:
                 uncertain.append(entry)
         return modern, uncertain
+
+    def search_effect_phrase(self, phrase: str, top: int = 20
+                             ) -> tuple[list[dict], str]:
+        """按「效果原文片段」全量找卡（用户直接粘贴/引用原文措辞时用）。
+
+        与词条/子串匹配不同：把原文与效果文本都做同样规范化（去标点/空白）后，
+        按 **最长连续匹配** 打分（≥4 连续字），且 cost 段也算进被匹配文本
+        （"才能发动"之前的解放/丢弃是原文的一部分）——这样
+        「把自己的手卡·场上1只怪兽解放才能发动」这类整句粘贴也能找到卡。
+        同分时按 4 字片段覆盖率二排，精确措辞的卡排最前。
+        返回按匹配长度降序的 top N，每条带命中片段，供 LLM 核对"原文确实这么写"。
+        """
+        clean = re.sub(r"[^一-鿿A-Za-z0-9]", "", phrase or "")
+        if len(clean) < 3:
+            return [], clean
+        grams3 = {clean[i:i + 3] for i in range(len(clean) - 2)}
+        grams4 = [clean[i:i + 4] for i in range(len(clean) - 3)]
+        db = self.store.connect()
+        rows = db.execute(
+            "SELECT id, cn_name, types, desc, pdesc FROM cards").fetchall()
+        scored: list[tuple[int, int, int, Any, str]] = []
+        for r in rows:
+            body = re.sub(r"[^一-鿿A-Za-z0-9]",
+                          "", (r["desc"] or "") + (r["pdesc"] or ""))[:400]
+            if len(body) < 4 or not any(g in body for g in grams3):
+                continue
+            best, pos = _lcs_best(clean, body)
+            if best < 4:
+                continue
+            cnt4 = sum(1 for g in grams4 if g in body)   # 片段覆盖率（同分二排）
+            scored.append((best, cnt4, pos, r, body))
+        if not scored:
+            return [], clean
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        cards = []
+        for best, _cnt4, pos, r, body in scored[:max(1, top)]:
+            start = max(0, pos - 6)
+            snip = body[start:pos + best + 24]
+            cards.append({"id": r["id"], "cn_name": r["cn_name"],
+                          "types": ((r["types"] or "").splitlines() or [""])[0],
+                          "snippet": f"…{snip}…"})
+        return cards, clean
+
     def run(self, name: str, args: dict[str, Any]) -> Any:
         fn = getattr(self, name, None)
         if fn is None:
@@ -431,6 +522,9 @@ class ToolRuntime:
         if name == "search_by_series":
             cards, token = r
             return self._render_series(cards, token), {"count": len(cards), "token": token}
+        if name == "search_effect_phrase":
+            cards, token = r
+            return self._render_phrase(cards, token), {"count": len(cards), "token": token}
         if name == "rag_search":
             hits, tr = r
             return self._render_rag(hits), {"hits": len(hits)}
@@ -465,6 +559,16 @@ class ToolRuntime:
         return "\n".join(lines)
 
     @staticmethod
+    def _render_phrase(cards: list, token: str) -> str:
+        SAMPLE = 15
+        if not cards:
+            return f"未找到原文含「{token}」的卡（按最长连续匹配≥4字）。"
+        lines = [f"按原文片段「{token}」最长连续匹配排序，共 {len(cards)} 张（前 {SAMPLE}）："]
+        for c in cards[:SAMPLE]:
+            lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c['snippet']}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _render_rag(hits: list) -> str:
         if not hits:
             return "（检索无相关片段）"
@@ -491,12 +595,16 @@ TOOLS = [
                        "required": ["card_id"]}}},
     {"type": "function", "function": {
         "name": "search_by_action",
-        "description": "按裁定动作全量找卡（用户问'有哪些/列出 cost包含X 的卡'，X是动作如 舍弃手卡/从卡组送去墓地/破坏/除外/因对方离开场上）。"
-                        "可按 reason 过滤：cost=只查作为发动代价的；effect=只查效果处理时的。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
+        "description": "按裁定动作全量找卡（用户问'有哪些/列出 cost包含X 的卡'，X是动作如 舍弃手卡/从卡组送去墓地/破坏/除外/解放/因对方离开场上）。"
+                        "动作短语不必与原文逐字一致：'解放手卡怪兽' 与 '把自己的手卡·场上1只怪兽解放才能发动' 都归为动作 解放。"
+                        "可按 reason 过滤：cost=只查作为发动代价的（原文'才能发动'之前）；effect=只查效果处理时的。"
+                        "可用 source 限定来源区域（如 手卡/场上/手卡·场上/卡组/墓地）。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
         "parameters": {"type": "object",
-                       "properties": {"phrase": {"type": "string", "description": "动作短语，如 舍弃手卡 / 从卡组送去墓地 / 破坏"},
+                       "properties": {"phrase": {"type": "string", "description": "动作短语，如 解放手卡 / 从卡组送去墓地 / 破坏"},
                                       "reason": {"type": "string", "enum": ["cost", "effect"],
-                                                 "description": "过滤：cost=仅发动代价段，effect=仅效果处理段；不传则都要"}},
+                                                 "description": "过滤：cost=仅发动代价段，effect=仅效果处理段；不传则都要"},
+                                      "source": {"type": "string",
+                                                 "description": "来源区域限定（可选）：手卡/场上/手卡·场上/卡组/墓地/额外卡组/除外"}},
                        "required": ["phrase"]}}},
     {"type": "function", "function": {
         "name": "search_by_effect",
@@ -506,9 +614,18 @@ TOOLS = [
                         "不传 source/target 退化为单关键词子串匹配。返回现代+未确认两档名单（带命中片段）。",
         "parameters": {"type": "object",
                        "properties": {"keyword": {"type": "string", "description": "动作/效果关键词，如 特殊召唤/送去墓地/加入手卡"},
-                                      "source": {"type": "string", "description": "来源 zone：卡组/手卡/墓地/额外卡组/场上/除外（可选）"},
+                                      "source": {"type": "string", "description": "来源 zone：卡组/手卡/墓地/额外卡组/场上/除外（可选，支持 手卡·场上 组合写法）"},
                                       "target": {"type": "string", "description": "目标卡名片段（可选，如 阿不思的落胤）"}},
                        "required": ["keyword"]}}},
+    {"type": "function", "function": {
+        "name": "search_effect_phrase",
+        "description": "按「效果原文片段」找卡（用户直接粘贴/引用一整句原文措辞时优先用）。"
+                        "按最长连续匹配打分（≥4 连续字），cost 段也参与匹配；返回命中片段供核对原文。",
+        "parameters": {"type": "object",
+                       "properties": {"phrase": {"type": "string",
+                                                 "description": "效果原文片段，如 把自己的手卡·场上1只怪兽解放才能发动"},
+                                      "top": {"type": "integer", "default": 20, "description": "返回上限"}},
+                       "required": ["phrase"]}}},
     {"type": "function", "function": {
         "name": "search_by_series",
         "description": "按卡名全量找某系列所有卡（用户问'X系列/所有X卡'）。返回全部命中不截断。",

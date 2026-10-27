@@ -13,7 +13,8 @@ import re
 
 # 同义词归一（与 agent/tools.py 一致）：舍弃↔丢弃、送入墓地↔送去墓地
 SYNS = {"舍弃": "丢弃", "丢弃": "舍弃", "送入墓地": "送去墓地",
-        "送去墓地": "送入墓地", "取对象": "为对象", "为对象": "取对象"}
+        "送去墓地": "送入墓地", "取对象": "为对象", "为对象": "取对象",
+        "手牌": "手卡", "手札": "手卡"}
 
 
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ ACTIONS: list[Action] = [
     Action("send_to_gy", "送去墓地（来源未指明）",
            [r"送[^\n。]{0,4}墓地"], source=""),
     Action("destroy", "破坏", [r"破坏"], source=""),
+    Action("release", "解放/献祭", [r"解放", r"献祭"], source=""),
     Action("banish", "除外", [r"除外", r"除[外去]"], source=""),
     Action("draw", "抽卡", [r"抽[^\n。]{0,2}卡"], source="deck"),
     Action("special_summon", "特殊召唤", [r"特殊召唤", r"特召"], source=""),
@@ -167,6 +169,8 @@ def map_phrase_to_actions(phrase: str) -> list[str]:
         hits.append("leaves_field_by_opponent")
     if "破坏" in p:
         hits.append("destroy")
+    if "解放" in p or "献祭" in p or "祭品" in p:
+        hits.append("release")
     if "除外" in p or "除开" in p:
         hits.append("banish")
     if "抽" in p and "卡" in p:

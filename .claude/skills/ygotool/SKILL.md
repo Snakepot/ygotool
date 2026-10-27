@@ -59,6 +59,8 @@ ygotool/
 19. **ReAct 的 thinking 没真正开**：原逻辑 `thinking=th if force_final else False`，而 force_final 只在撞工具调用上限时置真 → 模型自然收敛的最终答也在 thinking 关闭下产出。→ 改为「首轮路由关、拿到工具结果的后续轮开」：`th if (force_final or it > 0) else False`（`_react_ask`/`_react_stream` 两处）。
 20. **search_by_action 参数名**：方法参数是 `reason`，`agent._prepare` 枚举分支曾误传 `reason_filter=` → 走枚举意图时 TypeError 崩（mock/确定性路径；schema 与 server 传的是对的）。→ 统一传 `reason=`。
 21. **deck 分支 `hits` 未绑定**：`hits` 只在 `if not list_answered:` 内赋值，候选卡循环却写在外 → 枚举意图命中时 `UnboundLocalError`。→ 循环收进同一守卫内。
+22. **本体缺「解放」（tribute）等高频动作**：用户粘贴原文「把自己的手卡·场上1只怪兽解放才能发动」→ `search_by_action` 映射为空返回 0；子串兜底又给 3509 张噪音。→ ontology 补 `release` 动作 + `map_phrase_to_actions` 认 解放/献祭/祭品；`tag_actions` 跳过否定句并新增完整条款 `clause` 字段；`search_by_action` 加 `source` 过滤（组合来源如「手卡·场上」要求区域词都出现）。
+23. **粘贴原文找不到卡**：子串/词条匹配搞不定整句措辞。→ 新增 `search_effect_phrase(phrase)`：原文与效果文本同样规范化（去标点）后按最长连续匹配（≥4 字）+ 4 字片段覆盖率排序，cost 段参与匹配；REACT_RULE 教模型「原文→动作+来源，cost 在才能发动前」。
 
 ## 扩展模式
 - **加工具**：`ToolRuntime` 加方法（返回 `(text, trace)`）→ `agent._prepare` 按意图路由调用 → `trace.tools.append(...)` →（可选）`TOOLS` JSON schema 供原生 function-calling →（可选）`web/server.py` 加 `/api/xxx` 端点 + `app.js` 调用。
