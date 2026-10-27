@@ -24,8 +24,8 @@ from config import get_settings
 from ygocdb.store import CardStore
 from ygocdb.codec import decode_card
 from rag.index import VectorIndex
-from rag.retriever import Retriever, build_index, build_faq_index
-from rag.embedder_factory import build_embedder, build_embedder_for_index
+from rag.retriever import Retriever, build_index, build_faq_index, load_retriever
+from rag.embedder_factory import build_embedder
 from agent.llm import LLMClient
 from agent.budget import TokenBudgeter
 from agent.agent import CardAgent
@@ -36,21 +36,8 @@ def _store(settings) -> CardStore:
 
 
 def _load_retriever(settings, idx_name="idx_main.db") -> Retriever | None:
-    """加载已建索引，按 index_meta 记录的后端构造匹配 embedder。
-
-    TF-IDF 后端需从 chunk 文本重新 fit 词表（内存态）；openai/local 无状态直接用。
-    meta 缺失（旧库）退化为 tfidf，保持向后兼容。
-    """
-    path = settings.cache_dir / idx_name
-    if not path.exists():
-        return None
-    idx = VectorIndex(path)
-    meta = idx.meta_all()
-    backend = meta.get("backend") or "tfidf"
-    emb = build_embedder_for_index(settings, meta)
-    if backend == "tfidf":
-        emb.fit(idx.all_chunk_texts())
-    return Retriever(emb, idx)
+    """加载已建索引（逻辑在 rag.retriever.load_retriever，web 共用同一实现）。"""
+    return load_retriever(settings, idx_name)
 
 
 def cmd_refresh(args, settings):

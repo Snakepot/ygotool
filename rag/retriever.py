@@ -6,8 +6,10 @@ build_index：批量把一批卡用指定切分器切分、向量化、入库。
 from __future__ import annotations
 from typing import Iterable
 
+from config import Settings
 from .chunker import Chunk, chunk_cards
 from .embedder import Embedder
+from .embedder_factory import build_embedder_for_index
 from .index import VectorIndex
 
 
@@ -112,3 +114,24 @@ def build_faq_index(cards: Iterable[dict], store, chunker_name: str,
     if progress:
         print(f"[rag-faq] {chunker_name}: 入库 {total} 个 chunk")
     return total
+
+
+def load_retriever(settings: Settings, idx_name: str = "idx_main.db"
+                   ) -> "Retriever | None":
+    """加载已建索引，按 index_meta 记录的后端构造匹配 embedder（cli / web 共用）。
+
+    ★ 踩坑（已修）：此前 web/server.py 各自实现成固定 TF-IDF，而索引是按
+    embedding-3(1024 维) 建的 → 查询向量维度与库内不符，点积截断成垃圾分数。
+    统一走本函数，保证"建库用的后端"与"查询用的后端"一致。
+    TF-IDF 后端需从 chunk 文本重新 fit 词表（内存态）；openai/local 无状态直接用。
+    meta 缺失（旧库）退化为 tfidf，保持向后兼容。
+    """
+    path = settings.cache_dir / idx_name
+    if not path.exists():
+        return None
+    idx = VectorIndex(path)
+    meta = idx.meta_all()
+    emb = build_embedder_for_index(settings, meta)
+    if emb.backend == "tfidf":
+        emb.fit(idx.all_chunk_texts())
+    return Retriever(emb, idx)

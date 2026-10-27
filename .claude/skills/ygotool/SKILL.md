@@ -55,6 +55,10 @@ ygotool/
 15. **modal 关不掉铺满屏**：`.modal{display:flex}` 优先级高于 `[hidden]` 的 `display:none`。→ 加 `.modal[hidden]{display:none !important}`。
 16. **Windows 中文路径/GBK**：bash→cmd 传中文路径会乱。→ 测 .bat 用 PowerShell；脚本输出加 `PYTHONIOENCODING=utf-8`。
 17. **search 任务超时 `WinError 10060`**：`_link_and_fetch` 在线拉 FAQ 被限流。→ search 用 `with_faq=False`（仅本地），ruling 才联网拉 FAQ（带 try/except 回退）。
+18. **Web 检索分数失真（embedder/索引维度错配）**：`web/server.py` 的 `_load_retriever` 曾各自实现成固定 `Embedder("tfidf")` 加载索引，而索引是按 embedding-3(1024 维) 建的 → 查询向量与库内维度不同、点积截断成垃圾分数（裁定/构筑问答弱）。→ 统一用 `rag.retriever.load_retriever(settings)`（读 index_meta 构造匹配 embedder，tfidf 才 fit）——cli 与 web 共用，别各写一份。
+19. **ReAct 的 thinking 没真正开**：原逻辑 `thinking=th if force_final else False`，而 force_final 只在撞工具调用上限时置真 → 模型自然收敛的最终答也在 thinking 关闭下产出。→ 改为「首轮路由关、拿到工具结果的后续轮开」：`th if (force_final or it > 0) else False`（`_react_ask`/`_react_stream` 两处）。
+20. **search_by_action 参数名**：方法参数是 `reason`，`agent._prepare` 枚举分支曾误传 `reason_filter=` → 走枚举意图时 TypeError 崩（mock/确定性路径；schema 与 server 传的是对的）。→ 统一传 `reason=`。
+21. **deck 分支 `hits` 未绑定**：`hits` 只在 `if not list_answered:` 内赋值，候选卡循环却写在外 → 枚举意图命中时 `UnboundLocalError`。→ 循环收进同一守卫内。
 
 ## 扩展模式
 - **加工具**：`ToolRuntime` 加方法（返回 `(text, trace)`）→ `agent._prepare` 按意图路由调用 → `trace.tools.append(...)` →（可选）`TOOLS` JSON schema 供原生 function-calling →（可选）`web/server.py` 加 `/api/xxx` 端点 + `app.js` 调用。
