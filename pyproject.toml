@@ -1,0 +1,27 @@
+[project]
+name = "ygotool"
+version = "0.1.0"
+description = "基于 ygocdb.com API 的本地卡牌工具 + 游戏王卡牌 Agent（学习型：RAG/Few-shot/Temperature/Token控制）"
+requires-python = ">=3.10"
+dependencies = [
+    # 阶段3+ 才用到，先列在此；阶段1/2 部分可仅用标准库运行
+    "tiktoken>=0.7",
+]
+
+[project.optional-dependencies]
+llm = ["openai>=1.40"]        # OpenAI 兼容客户端（DeepSeek/Kimi/智谱GLM/本地vLLM 均可）
+vec = ["sqlite-vec>=0.1.6"]   # 向量存储；不可用时可回退 numpy
+embed = ["sentence-transformers>=3.0"]  # 本地 embedding 回退方案
+web = ["fastapi>=0.110", "uvicorn>=0.27"]  # Web 前端
+all = ["openai>=1.40", "sqlite-vec>=0.1.6", "sentence-transformers>=3.0", "fastapi>=0.110", "uvicorn>=0.27"]
+
+[project.scripts]
+ygotool = "cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ygocdb", "rag", "agent", "web"]
+py-modules = ["config", "cli"]

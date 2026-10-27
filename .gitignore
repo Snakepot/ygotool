@@ -1,0 +1,30 @@
+# ---- 环境与密钥（含真实 API Key，绝不入库）----
+.env
+.env.local
+.env.*.local
+
+# ---- 运行时数据（可重新生成：refresh / build-index 会重建）----
+cache/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- IDE ----
+.idea/
+.vscode/
+
+# ---- 示例 / 评测产物（脚本可重新生成）----
+examples/*.csv
+eval/result.csv
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db

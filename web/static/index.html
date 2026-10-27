@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ygotool · 游戏王卡牌 Agent</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">ygotool</span>
+  <button id="theme-btn" class="icon-btn" title="深色/浅色">🌙</button>
+</div>
+<div class="layout" id="layout">
+  <!-- 左：卡牌浏览 -->
+  <section class="panel" id="browse">
+    <h2>卡牌浏览</h2>
+    <div class="search-row">
+      <input id="search-input" placeholder="按卡名搜索…" autocomplete="off">
+      <button id="search-btn">搜</button>
+      <button id="search-clear" class="ghost-btn">清空</button>
+    </div>
+    <div id="card-list" class="card-grid"></div>
+    <hr>
+    <div class="search-row">
+      <input id="effect-input" placeholder='按效果/动作搜（如 舍弃手卡、从卡组送去墓地、破坏）' autocomplete="off">
+      <select id="effect-reason" title="按 cost/效果 过滤（仅动作命中时生效）">
+        <option value="">cost/效果都要</option>
+        <option value="cost">仅 cost</option>
+        <option value="effect">仅效果</option>
+      </select>
+      <button id="effect-btn">搜</button>
+      <button id="effect-clear" class="ghost-btn">清空</button>
+    </div>
+    <div id="effect-list" class="card-grid"></div>
+    <hr>
+    <div class="search-row">
+      <input id="series-input" placeholder='按系列搜（如 具象天使）' autocomplete="off">
+      <button id="series-btn">按系列</button>
+      <button id="series-clear" class="ghost-btn">清空</button>
+    </div>
+    <div id="series-list" class="card-grid"></div>
+  </section>
+
+  <!-- 中：聊天 -->
+  <section class="panel chat-panel" id="chat">
+    <div class="chat-head">
+      <h2>Agent 问答</h2>
+      <div class="chat-head-ctrl">
+        <label>任务 <select id="task">
+          <option value="ruling">裁定</option>
+          <option value="search">查卡</option>
+          <option value="deck">构筑</option>
+        </select></label>
+        <label>人设 <select id="persona">
+          <option value="strict">裁定官</option>
+          <option value="teach">教学向导</option>
+        </select></label>
+        <button id="clear-btn" class="ghost-btn" title="清空对话">清空</button>
+      </div>
+    </div>
+    <div id="messages" class="messages"></div>
+    <div class="input-row">
+      <textarea id="question" placeholder="问点啥…（Shift+Enter 换行，Enter 发送）" rows="2"></textarea>
+      <button id="send-btn">发送</button>
+      <button id="stop-btn" class="ghost-btn" hidden>停止</button>
+    </div>
+  </section>
+
+  <!-- 右：参数 -->
+  <aside class="panel params-panel" id="params">
+    <div class="params-head">
+      <h2>参数</h2>
+      <button id="collapse-btn" class="ghost-btn" title="折叠/展开">›</button>
+    </div>
+    <div class="param"><label>温度 <span id="v-temp"></span>
+      <input id="p-temp" type="range" min="0" max="1" step="0.1" value="0.2"></div>
+    <div class="param"><label>max_tokens <span id="v-mt"></span>
+      <input id="p-mt" type="number" min="64" max="8192" step="64" value="8192"></div>
+    <div class="param"><label>few-shot <span id="v-fs"></span>
+      <input id="p-fs" type="number" min="0" max="4" step="1" value="2"></div>
+    <div class="param"><label>max_context <span id="v-mc"></span>
+      <input id="p-mc" type="number" min="256" max="32000" step="256" value="16000"></div>
+    <div class="param"><label><input id="p-thinking" type="checkbox" checked> 思考</label></div>
+    <hr>
+    <div class="param"><label>模型 <span id="v-model" class="muted"></span></div>
+    <div class="param"><label>后端 <span id="backend-tag" class="tag"></span></div>
+    <div class="param"><label>索引 <span id="v-index" class="muted"></span></div>
+  </aside>
+</div>
+
+<!-- 卡牌详情模态 -->
+<div id="card-modal" class="modal" hidden>
+  <div class="modal-backdrop"></div>
+  <div class="modal-box">
+    <button class="modal-close" id="modal-close">×</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
