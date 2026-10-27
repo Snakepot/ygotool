@@ -15,9 +15,7 @@ from config import get_settings
 from ygocdb.store import CardStore
 from ygocdb.codec import decode_card
 from rag.chunker import strip_html
-from rag.embedder import Embedder
-from rag.index import VectorIndex
-from rag.retriever import Retriever
+from rag.retriever import Retriever, load_retriever
 from agent.llm import LLMClient
 from agent.budget import TokenBudgeter
 from agent.agent import CardAgent
@@ -33,16 +31,12 @@ _retriever: Retriever | None = None
 
 
 def _load_retriever() -> Retriever | None:
+    """按 index_meta 记录的后端加载检索器（与 cli 共用逻辑，修复此前固定 TF-IDF
+    与 embedding-3 索引维度不匹配、导致检索分数失真的问题）。"""
     global _retriever
     if _retriever is not None:
         return _retriever
-    idx_path = settings.cache_dir / "idx_main.db"
-    if not idx_path.exists():
-        return None
-    emb = Embedder(backend="tfidf")
-    idx = VectorIndex(idx_path)
-    emb.fit(idx.all_chunk_texts())
-    _retriever = Retriever(emb, idx)
+    _retriever = load_retriever(settings)
     return _retriever
 
 

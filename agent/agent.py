@@ -114,7 +114,7 @@ class CardAgent:
                 # 命中已知动作→走结构化本体检索（能按 cost/effect 过滤）；否则回退子串检索
                 use_action = bool(map_phrase_to_actions(kw))
                 if use_action:
-                    modern, uncertain = rt.search_by_action(kw, reason_filter=reason_filter)
+                    modern, uncertain = rt.search_by_action(kw, reason=reason_filter)
                     tool_name = "search_by_action"
                     tag = "action_search"
                     hdr = ("本体检索(按动作" +
@@ -194,23 +194,23 @@ class CardAgent:
                 retrieved.extend(hits)
                 if hits:
                     trace.tools.append("rag_search")
-            seen: dict[int, tuple[str, str]] = {}
-            for ch, _ in hits:
-                cid = ch.meta.get("id") or ch.meta.get("cid")
-                name = ch.meta.get("name", "?")
-                if cid and cid not in seen:
-                    try:
-                        seen[cid] = (name, rt.limit_status(cid, "cn"))
-                    except Exception:
-                        pass
-            if seen:
-                trace.tools.append("limit_status")
-                trace.tool_results["limit_status"] = len(seen)
-                lines = [f"- {n}(id={cid}) 简中禁限：{st}"
-                         for cid, (n, st) in seen.items()]
-                retrieved.append((Chunk(
-                    text="检索到的候选卡及当前简中禁限状态：\n" + "\n".join(lines),
-                    meta={"kind": "deck_candidates", "name": "candidates"}), 1.6))
+                seen: dict[int, tuple[str, str]] = {}
+                for ch, _ in hits:
+                    cid = ch.meta.get("id") or ch.meta.get("cid")
+                    name = ch.meta.get("name", "?")
+                    if cid and cid not in seen:
+                        try:
+                            seen[cid] = (name, rt.limit_status(cid, "cn"))
+                        except Exception:
+                            pass
+                if seen:
+                    trace.tools.append("limit_status")
+                    trace.tool_results["limit_status"] = len(seen)
+                    lines = [f"- {n}(id={cid}) 简中禁限：{st}"
+                             for cid, (n, st) in seen.items()]
+                    retrieved.append((Chunk(
+                        text="检索到的候选卡及当前简中禁限状态：\n" + "\n".join(lines),
+                        meta={"kind": "deck_candidates", "name": "candidates"}), 1.6))
             lim_txt, _ = rt.get_limits()
             trace.tools.append("get_limits")
             retrieved.append((Chunk(text=lim_txt, meta={"kind": "limits",
@@ -317,10 +317,11 @@ class CardAgent:
         answer = ""
         total_calls = 0
         force_final = False
-        # 路由轮（选工具）关 thinking 秒回；仅最终答（force_final）才开深思（ruling）
+        # 第 1 轮只做工具路由（关 thinking 秒回）；拿到工具结果的后续轮次恢复深思（ruling），
+        # 否则"模型自然收敛直接作答"的最终答会在 thinking 关闭状态下产出，与设计意图相悖。
         for it in range(self.MAX_ITERS):
             res = self.llm.chat(msgs, temperature=temp, max_tokens=mt,
-                                thinking=th if force_final else False,
+                                thinking=th if (force_final or it > 0) else False,
                                 tools=None if force_final else TOOLS)
             for key in usage:
                 usage[key] += res.usage.get(key, 0)
@@ -376,11 +377,12 @@ class CardAgent:
         total_calls = 0
         force_final = False
         got_answer = False  # 是否已流式吐出最终答（自然收敛 or force_final 轮）
-        # 路由轮关 thinking 秒回；仅 force_final 收尾轮开深思（ruling）
+        # 第 1 轮路由关 thinking 秒回；拿到工具结果的后续轮次开深思（ruling），
+        # 否则自然收敛的最终答会在 thinking 关闭状态下产出。force_final 收尾轮同样开。
         for it in range(self.MAX_ITERS):
             tool_calls = None
             for ev in self.llm.stream(msgs, temperature=temp, max_tokens=mt,
-                                      thinking=th if force_final else False,
+                                      thinking=th if (force_final or it > 0) else False,
                                       tools=None if force_final else TOOLS):
                 t = ev.get("type")
                 if t == "tool_calls":
