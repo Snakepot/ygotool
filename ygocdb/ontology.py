@@ -36,10 +36,10 @@ ACTIONS: list[Action] = [
     Action("discard_hand", "丢弃/舍弃手卡",
            [r"丢弃", r"舍弃"], source="hand"),
     Action("send_hand_to_gy", "手牌送去墓地",
-           [r"手[牌卡][^。]{0,8}送[^\n。]{0,4}墓地", r"从手[牌卡][^。]{0,6}送[^\n。]{0,4}墓地"],
+           [r"手[牌卡][^。]{0,20}送[^\n。]{0,4}墓地", r"从手[牌卡][^。]{0,20}送[^\n。]{0,4}墓地"],
            source="hand"),
     Action("send_deck_to_gy", "卡组送去墓地",
-           [r"卡组[^。]{0,8}送[^\n。]{0,4}墓地", r"从卡组[^。]{0,6}送[^\n。]{0,4}墓地"],
+           [r"卡组[^。]{0,12}送[^\n。]{0,4}墓地", r"从卡组[^。]{0,12}送[^\n。]{0,4}墓地"],
            source="deck"),
     Action("send_field_to_gy", "场上送去墓地",
            [r"场上[^。]{0,8}送[^\n。]{0,4}墓地", r"从场上[^。]{0,6}送[^\n。]{0,4}墓地"],
@@ -64,6 +64,72 @@ _COMPILED: dict[str, list[re.Pattern]] = {
     a.key: [re.compile(p) for p in a.patterns] for a in ACTIONS
 }
 _BY_KEY: dict[str, Action] = {a.key: a for a in ACTIONS}
+
+
+def zones_in_text(text: str) -> set[str]:
+    """识别一段文本里出现的来源区（key 集合：hand/deck/gy/extra/field/banished）。
+
+    只做词面识别：调用方通常只传"动作动词之前"的片段（来源区）。
+    「卡组」用负向断言排除「额外卡组/融合卡组」。
+    """
+    out: set[str] = set()
+    if not text:
+        return out
+    if "额外卡组" in text or "融合卡组" in text:
+        out.add("extra")
+    if re.search(r"(?<!额外)(?<!融合)卡组", text):
+        out.add("deck")
+    if "手卡" in text or "手牌" in text or "手札" in text:
+        out.add("hand")
+    if "墓地" in text:
+        out.add("gy")
+    if "场上" in text:
+        out.add("field")
+    if "除外区" in text or "除外" in text:
+        out.add("banished")
+    return out
+
+
+def first_action_pos(text: str) -> int | None:
+    """文本里最早出现的动作词位置（无则 None）。用于把"动作前的片段"当来源区。"""
+    best: int | None = None
+    for pats in _COMPILED.values():
+        for pat in pats:
+            m = pat.search(text or "")
+            if m and (best is None or m.start() < best):
+                best = m.start()
+    return best
+
+
+# 用于"来源区"的动词词表（动作词本身，而非含来源的整条正则）
+VERB_WORDS = ["解放", "献祭", "丢弃", "舍弃", "送去墓地", "送入墓地", "送进墓地",
+              "送去", "送入", "送进", "加入手卡", "加入手牌", "特殊召唤", "特召",
+              "除外", "破坏", "抽卡", "抽"]
+
+
+def first_verb_pos(text: str) -> int | None:
+    """文本里最早出现的"动作动词"位置（无则 None）。比 first_action_pos 更准：
+    不会把"从额外卡组…"里的"卡组"当成动作起点。"""
+    if not text:
+        return None
+    best: int | None = None
+    for w in VERB_WORDS:
+        i = text.find(w)
+        if i >= 0 and (best is None or i < best):
+            best = i
+    return best
+
+
+def source_zones_from_phrase(phrase: str) -> set[str]:
+    """从查询短语抽"来源区"：动词之前的片段；若动词在句首（如"解放手卡"），取全句区域。"""
+    p = phrase or ""
+    pos = first_verb_pos(p)
+    if pos is None:
+        return zones_in_text(p)
+    z = zones_in_text(p[:pos])
+    if z:
+        return z
+    return zones_in_text(p)
 
 
 # ---- 来源（zone）抽取（PSCT：动作的来源/目的地）----
@@ -116,7 +182,7 @@ def extract_targets(segment: str) -> list[str]:
 
 # 动作单元分割连词：PSCT 用连词连接多个动作单元
 # （那之后=then, 并且/以及=and, 此外=also, 然后/之后 等）
-_CONJ = re.compile(r"那之后|并且|以及|此外|然后|之后|且|，|。")
+_CONJ = re.compile(r"那之后|或者|或|并且|以及|此外|然后|之后|且|，|。")
 
 
 def split_action_segments(body: str) -> list[str]:

@@ -119,8 +119,12 @@ async function doEffectSearch() {
     h.innerHTML = `<b>${esc(title)}（${cards.length}）</b>${note ? " " + esc(note) : ""}`;
     el.appendChild(h); cards.forEach(c => renderCardItem(el, c));
   };
-  tier(`现代（${mode}）`, d.modern, "");
-  tier("未确认（90X 前旧措辞，须查FAQ）", d.uncertain, "");
+  const tOf = (c) => c.tier !== undefined ? c.tier : (c.specific ? 2 : 0);
+  const all = d.modern.concat(d.uncertain);
+  tier(`★ 精确匹配（${mode}）`, all.filter(c => tOf(c) === 2), "");
+  tier("◆ 次精确（限定一致，来源更宽）", all.filter(c => tOf(c) === 1), "");
+  tier("通用 · 现代", d.modern.filter(c => tOf(c) === 0), "");
+  tier("通用 · 未确认（90X 前旧措辞，须查FAQ）", d.uncertain.filter(c => tOf(c) === 0), "");
   if (!d.count) el.innerHTML = "<div class='sub'>无匹配</div>";
 }
 $("search-btn").onclick = doSearch;
