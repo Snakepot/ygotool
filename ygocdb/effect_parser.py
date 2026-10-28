@@ -209,7 +209,8 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
     """
     from .ontology import (match_actions, _BY_KEY, extract_source,
                             extract_object_source, extract_targets,
-                            split_action_segments)
+                            split_action_segments, zones_in_text,
+                            first_verb_pos)
     out: list[dict] = []
     sections: list[tuple[str, str]] = []
     if pdesc:
@@ -225,22 +226,36 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
             # 不退回 extract_source（否则会把条款里别处出现的区域词误当来源，如次元魔法）
             clause_source = extract_object_source(clause_full)
             cost_text, _body = _cost_body(clause_full)
+            # 条款 cost 段的区域（供代词句继承来源区，如"以墓地「X」为对象…那只怪兽特殊召唤"）
+            clause_zones = zones_in_text(cost_text)
             for seg, reason in ((cost_text, "cost"), (body, "effect")):
                 if not seg:
                     continue
                 for unit in split_action_segments(seg):
-                    if not unit.strip() or _NEG_RE.search(unit):
+                    unit = unit.strip()
+                    if not unit or _NEG_RE.search(unit):
                         continue
                     acts = match_actions(unit)
                     if not acts:
                         continue
                     src = extract_object_source(unit) or extract_source(unit)
                     tgts = extract_targets(unit)
+                    # 来源区集合：动词之前的片段；动词在句首时，解放/丢弃类取动词后的区域词
+                    pos = first_verb_pos(unit)
+                    if pos is not None:
+                        zones = zones_in_text(unit[:pos])
+                        if not zones and pos == 0 and any(
+                                a in ("release", "discard_hand") for a in acts):
+                            zones = zones_in_text(unit)
+                    else:
+                        zones = zones_in_text(unit)
                     if _ANAPHORA.search(unit):
                         if not src:
                             src = clause_source
                         if not tgts:
                             tgts = clause_targets
+                        if not zones:
+                            zones = clause_zones
                     for key in acts:
                         a = _BY_KEY.get(key)
                         if not a:
@@ -248,10 +263,11 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                         out.append({
                             "action": key, "label": a.label,
                             "source": src or a.source,
+                            "zones": sorted(zones),
                             "reason": "uncertain" if not structured else reason,
                             "clause_idx": idx, "section": sec_name,
-                            "snippet": unit.strip()[:60].replace("\n", " "),
-                            "clause": unit.strip()[:120].replace("\n", " "),
+                            "snippet": unit[:60].replace("\n", " "),
+                            "clause": unit[:120].replace("\n", " "),
                             "targets": tgts,
                         })
     return out

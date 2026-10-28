@@ -65,6 +65,7 @@ ygotool/
 25. **来源绑定粒度太粗**：「解放手卡」305 张里大量误召（次元魔法：那只怪兽解放，从手卡把…特殊召唤；死皇帝之陵墓：**不用**解放…手卡1只怪兽；念动力脉冲/熔岩龙：手卡出现在其它分句）。→ 新增 `tag_action_units`：cost/效果体各自按连词切动作单元，zone 只在单元内提取；否定词扩到 不用/无需/不需要/不进行；代词句只继承"区域+数量+「目标」"句式（`extract_object_source`）的 zone。search_by_action 改用它。
 26. **查询归一化**：等级3/N星/N星级 → N星；「从卡组」不匹配「额外卡组/融合卡组」（负向断言 `(?<!额外)(?<!融合)卡组`）；source 留空时自动从短语抽 zone 词。
 27. **别名表接线**：`agent/data/aliases.md` 由 `agent/data_loader.load_aliases/apply_aliases` 解析（格式：`- 别名A|别名B: 规范`、`regex: 模式 -> 替换`、`⏸` 开头跳过、`- （` 注释跳过）；`tools._normalize_query` 先跑别名再跑等级正则；`search_by_action/search_by_effect/search_effect_phrase` 入口都归一化。坑：别名 `通常怪→通常怪兽` 会撞已写好的「通常怪兽」变成「怪兽兽」→ 用 `(?!兽)` 负向断言；精确匹配组在 `_render_list` 要列全（上限 30，否则排第 23 位的目标卡 LLM 看不到）。
+28. **"来源"被误当作查询区 / 次精确档（三档分级）**：用户问「从手卡把水属性怪兽送去墓地」时，① 查询短语里的「墓地」是**目的地**不是来源（`_zone_words_in_phrase` 曾把目的地算进来）；② 卡文「手卡·卡组」「手卡·场上（表侧表示）」离动作词太远，`手[牌卡][^。]{0,8}` 窗口匹配不到 → 波塞德拉深渊/轰海皇被漏。→ 用 `ontology.source_zones_from_phrase`（动词 `VERB_WORDS` 之前的片段才当来源）和 `first_verb_pos`（不用含来源的整条正则起点）；`tag_action_units` 记录每单元 `zones`（动作词前片段；动词在句首时仅解放/丢弃类取动词后区域词），代词句回退 clause 的 cost 区域；`send_hand_to_gy` 窗口放宽到 0,20 并新增「手卡·卡组/手卡·场上」组合匹配；连词表加「或/或者」（防「从手卡把钢核送去墓地**或**把手卡1只水属性怪兽给对方观看」这类跨动作串味）。三档：★精确（限定一致+来源一致）/◆次精确（限定一致但来源更宽，如手卡·卡组）/通用；`_render_list` 分三组，提示词要求回答补「此外，也有…来源更宽的卡」。
 
 ## 扩展模式
 - **加工具**：`ToolRuntime` 加方法（返回 `(text, trace)`）→ `agent._prepare` 按意图路由调用 → `trace.tools.append(...)` →（可选）`TOOLS` JSON schema 供原生 function-calling →（可选）`web/server.py` 加 `/api/xxx` 端点 + `app.js` 调用。

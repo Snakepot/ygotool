@@ -103,6 +103,12 @@ def _zone_words_in_phrase(phrase: str) -> list[str]:
     return out
 
 
+def _query_zones(phrase: str) -> set[str]:
+    """从查询短语抽"来源区"（动词之前的片段；动词在句首时取全句）。"""
+    from ygocdb.ontology import source_zones_from_phrase
+    return source_zones_from_phrase(_normalize_query(phrase))
+
+
 def _zone_in_unit(word: str, text: str) -> bool:
     """zone 词是否出现在动作单元里。卡组要排除「额外卡组/融合卡组」（P04：卡组≠额外卡组）。"""
     if not word or not text:
@@ -487,7 +493,11 @@ class ToolRuntime:
                 return True
             return False
 
-        zone_words = _zone_words(_normalize_query(source)) or _zone_words_in_phrase(p)
+        q_zone_keys: set[str] = set()
+        if source:
+            q_zone_keys = {SRC[w] for w in _zone_words(_normalize_query(source))}
+        if not q_zone_keys:
+            q_zone_keys = _query_zones(p)
         mods = _query_modifiers(p)
 
         db = self.store.connect()
@@ -501,26 +511,37 @@ class ToolRuntime:
             pdesc = r["pdesc"] or ""
             tags = tag_action_units(desc, pdesc)
             matched = [t for t in tags if t["action"] in keys and reason_ok(t["reason"])]
-            if zone_words:
-                # 组合来源（如 手卡·场上）要求单元里列出的区域词都出现
+            if q_zone_keys:
+                # 来源区：查询来源必须是该动作单元来源区的子集（来源更宽的卡进"次精确"）
                 matched = [t for t in matched
-                           if all(_zone_in_unit(w, t.get("clause") or "") for w in zone_words)]
+                           if q_zone_keys <= set(t.get("zones") or [])]
             if not matched:
                 continue
             t = matched[0]
-            specific = bool(mods) and any(
-                all(m in (u.get("clause") or "") for m in mods) for u in matched)
+            # 精确档位：来源一致(2) / 来源更宽(1) / 通用(0)，并与限定词档取较小值
+            mod_units = [u for u in matched
+                         if all(m in (u.get("clause") or "") for m in mods)]
+            mod_ok = (not mods) or bool(mod_units)
+            if q_zone_keys:
+                uzones = set(mod_units[0].get("zones") or []) if mod_units else set()
+                zone_tier = (2 if uzones == q_zone_keys
+                             else (1 if q_zone_keys < uzones else 0))
+            else:
+                zone_tier = 2
+            mod_tier = 2 if mod_ok else 0
+            tier = min(zone_tier, mod_tier) if mods else zone_tier
             entry = {"id": r["id"], "cn_name": r["cn_name"],
                      "types": ((r["types"] or "").splitlines() or [""])[0],
-                     "snippet": t["snippet"], "specific": specific,
+                     "snippet": t["snippet"], "tier": tier,
+                     "specific": tier == 2, "near": tier == 1,
                      "reason": t["reason"]}
             if is_structured(desc) or is_structured(pdesc):
                 modern.append(entry)
             else:
                 uncertain.append(entry)
-        # 特异度优先：明确限定用户条件的卡排最前（P03：精确匹配 > 泛泛满足）
-        modern.sort(key=lambda c: 0 if c["specific"] else 1)
-        uncertain.sort(key=lambda c: 0 if c["specific"] else 1)
+        # 特异度优先：精确(2) > 次精确(1) > 通用(0)（P03：精确匹配 > 泛泛满足）
+        modern.sort(key=lambda c: -c["tier"])
+        uncertain.sort(key=lambda c: -c["tier"])
         return modern, uncertain
 
     def search_effect_phrase(self, phrase: str, top: int = 20
@@ -614,28 +635,54 @@ class ToolRuntime:
                                args.get("target", "")]).strip()
             hdr = f"按效果「{args.get('keyword','')}」"
         mods = _query_modifiers(phrase)
+        # 查询来源区（用于"来源一致/更宽"分组；search_by_action 才做）
+        qz: set[str] = set()
+        if name == "search_by_action":
+            src = args.get("source", "")
+            if src:
+                from ygocdb.ontology import zones_in_text
+                qz = zones_in_text(_normalize_query(src))
+            if not qz:
+                qz = _query_zones(phrase)
+        zone_label = {"hand": "手卡", "deck": "卡组", "gy": "墓地",
+                      "extra": "额外卡组", "field": "场上", "banished": "除外"}
+        zone_text = "、".join(zone_label.get(z, z) for z in sorted(qz))
         total = len(modern) + len(uncertain)
         lines = [f"{hdr} 共匹配 {total} 张（现代{len(modern)}+未确认{len(uncertain)}）。"]
-        if mods:
-            spec = [c for c in modern + uncertain if c.get("specific")]
-            gen_m = [c for c in modern if not c.get("specific")]
-            gen_u = [c for c in uncertain if not c.get("specific")]
-            SPEC_SAMPLE = 30  # 精确匹配是"答案"，尽量列全
-            lines.append(f"★ 明确限定「{'、'.join(mods)}」的卡（优先呈现）：")
+
+        def tier(c: dict) -> int:
+            return c.get("tier", 2 if c.get("specific") else 0)
+
+        if mods or qz:
+            SPEC_SAMPLE, NEAR_SAMPLE = 30, 15
+            spec = [c for c in modern + uncertain if tier(c) == 2]
+            near = [c for c in modern + uncertain if tier(c) == 1]
+            gen_m = [c for c in modern if tier(c) == 0]
+            gen_u = [c for c in uncertain if tier(c) == 0]
             if spec:
+                if mods:
+                    lines.append(f"★ 精确匹配（明确限定「{'、'.join(mods)}」且来源一致）：")
+                else:
+                    lines.append(f"★ 来源一致（来源限定为「{zone_text}」）：")
                 for c in spec[:SPEC_SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
             else:
-                lines.append("（本批结果里没有明确限定该条件的卡，以下为通用卡）")
-            if gen_m:
-                lines.append("【通用（未限定该条件，可自由选择对象/目标）】现代:")
+                lines.append("（本批结果里没有来源/限定条件一致的卡）")
+            if near:
+                if mods:
+                    lines.append(f"◆ 次精确（同样明确限定「{'、'.join(mods)}」，但来源更宽——可同时从手卡/卡组/场上等多个区域选取）：")
+                else:
+                    lines.append(f"◆ 来源更宽（包含「{zone_text}」，可同时从多个区域选取）：")
+                for c in near[:NEAR_SAMPLE]:
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            if gen_m or gen_u:
+                lines.append("【通用（未限定该条件，可自由选择对象/目标）】:")
                 for c in gen_m[:SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
-            if gen_u:
-                lines.append("【通用·未确认(90X前旧措辞,须查FAQ)】:")
                 for c in gen_u[:SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
-            shown = len(spec[:SPEC_SAMPLE]) + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE])
+            shown = (len(spec[:SPEC_SAMPLE]) + len(near[:NEAR_SAMPLE])
+                     + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE]))
             if total > shown:
                 lines.append(f"（其余 {total - shown} 张见左栏完整名单）")
         else:
@@ -697,7 +744,7 @@ TOOLS = [
                         "动作短语不必与原文逐字一致：'解放手卡怪兽' 与 '把自己的手卡·场上1只怪兽解放才能发动' 都归为动作 解放。"
         "**必须把用户全部限定词写进 phrase**（例：从卡组将等级3怪兽送入墓地 → phrase=从卡组把3星怪兽送去墓地），省略限定词会只得到通用卡；若返回里没有「★明确限定」分组，说明 phrase 漏了限定词，补上再查。"
                         "可按 reason 过滤：cost=只查作为发动代价的（原文'才能发动'之前）；effect=只查效果处理时的；不传 reason 时 cost 与效果段都搜（找「cost 包含X」的卡用它）。"
-                        "可用 source 限定来源区域（如 手卡/场上/手卡·场上/卡组/墓地）；source 留空时自动从短语解析。结果按特异度分组：明确限定用户条件（等级/属性/种族/来源）的卡会标「★明确限定」并优先列出。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
+                        "可用 source 限定来源区域（如 手卡/场上/手卡·场上/卡组/墓地）；source 留空时自动从短语解析。结果分三档：★精确（限定一致+来源一致）/◆次精确（限定一致但来源更宽，如「手卡·卡组」）/通用；精确优先。返回现代(已结构化)+未确认(90X前旧措辞)两档全量名单。",
         "parameters": {"type": "object",
                        "properties": {"phrase": {"type": "string", "description": "动作短语，如 解放手卡 / 从卡组送去墓地 / 破坏"},
                                       "reason": {"type": "string", "enum": ["cost", "effect"],
