@@ -28,6 +28,8 @@ eval/result.csv
 # ---- 个人工作区（简历、学习笔记等，与项目功能无关，不上传）----
 workspace01/
 workspace02/
+docs/简历-项目说明.md
+docs/agent-concepts-review.md
 
 # ---- 系统 ----
 .DS_Store
