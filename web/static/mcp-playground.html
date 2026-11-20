@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ygocdb-mcp 测试台 · 对比本项目检索</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { padding: 16px 22px 6px; }
+  header h1 { margin: 0 0 6px; font-size: 20px; }
+  .hint { margin: 0 0 4px; color: #555; font-size: 13px; line-height: 1.5; }
+  .hint a { color: #2b6cb0; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 22px; }
+  .controls input { width: 320px; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  .controls select { padding: 7px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  .controls button { padding: 7px 14px; border: 0; border-radius: 6px; background: #2b6cb0; color: #fff; cursor: pointer; font-size: 14px; }
+  .controls button.ghost { background: #fff; color: #2b6cb0; border: 1px solid #2b6cb0; }
+  .controls button:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 12px; color: #666; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 22px 22px; }
+  .panel { background: #fff; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); min-height: 200px; }
+  .panel h2 { font-size: 15px; margin: 0 0 8px; }
+  .meta { font-size: 12px; color: #888; font-weight: normal; }
+  .cards { display: flex; flex-direction: column; gap: 4px; max-height: 380px; overflow: auto; }
+  .row { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-bottom: 1px dashed #eee; font-size: 13px; }
+  .row .n { font-weight: 600; }
+  .row .id { color: #888; font-size: 12px; }
+  .row .t { color: #444; font-size: 12px; }
+  pre { background: #111; color: #d0f0c0; padding: 10px; border-radius: 6px; font-size: 12px; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+  details summary { cursor: pointer; color: #2b6cb0; font-size: 13px; margin: 6px 0; }
+  img { max-width: 180px; border-radius: 6px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ygocdb-mcp 测试台（第三方在线检索 vs 本项目本地检索）</h1>
+  <p class="hint">左边是第三方 MCP 服务器 <code>ygocdb-mcp</code>（127.0.0.1:18081，实时调 ygocdb 在线 API）；右边是本项目本地 <code>cards.db</code>（/api/search）。
+  同一关键词对比两边行为，看有没有可借鉴的地方。<a href="/">← 回 Agent 主页</a></p>
+</header>
+<section class="controls">
+  <input id="q" placeholder="关键词，如 青眼 / 舍弃手卡 / 89631139" value="青眼">
+  <select id="tool">
+    <option value="search_cards">search_cards · 在线检索</option>
+    <option value="get_card_by_id">get_card_by_id · 按密码查</option>
+    <option value="get_card_image">get_card_image · 卡图</option>
+  </select>
+  <button id="run">调用 MCP</button>
+  <button id="local" class="ghost">查本项目</button>
+  <span id="status" class="status"></span>
+</section>
+<main>
+  <section class="panel">
+    <h2>第三方 MCP 返回 <span id="mcp-meta" class="meta"></span></h2>
+    <div id="mcp-cards" class="cards"></div>
+    <details><summary>原始响应 JSON</summary><pre id="mcp-raw"></pre></details>
+  </section>
+  <section class="panel">
+    <h2>本项目本地检索 <span id="local-meta" class="meta"></span></h2>
+    <div id="local-cards" class="cards"></div>
+  </section>
+</main>
+<script>
+"use strict";
+var MCP_URL = "http://127.0.0.1:18081/mcp";
+var $ = function (id) { return document.getElementById(id); };
+var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+
+function setStatus(msg, bad) { var el = $("status"); el.textContent = msg; el.style.color = bad ? "#c00" : "#666"; }
+
+function parseEvents(text) {
+  var events = [];
+  var blocks = String(text || "").split("\n\n");
+  for (var i = 0; i < blocks.length; i++) {
+    var lines = blocks[i].split("\n");
+    for (var j = 0; j < lines.length; j++) {
+      var line = lines[j];
+      if (line.indexOf("data:") === 0) {
+        try { events.push(JSON.parse(line.slice(5).trim())); } catch (e) {}
+      }
+    }
+  }
+  return events;
+}
+
+function mcpPost(payload) {
+  return fetch(MCP_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    return r.text().then(function (t) { return { status: r.status, text: t }; });
+  });
+}
+
+function renderMCPCard(r) {
+  var types = "";
+  try { types = ((r.text && r.text.types) || "").split("\n")[0]; } catch (e) {}
+  return '<div class="row"><span class="n">' + esc(r.cn_name) + '</span>' +
+         '<span class="id">#' + esc(r.id) + '</span>' +
+         '<span class="t">' + esc(types) + '</span></div>';
+}
+
+function renderLocalCard(x) {
+  return '<div class="row"><span class="n">' + esc(x.cn_name) + '</span>' +
+         '<span class="id">#' + esc(x.id) + '</span>' +
+         '<span class="t">' + esc((x.types || "").split("\n")[0]) + '</span></div>';
+}
+
+function runMCP() {
+  var q = $("q").value.trim();
+  var tool = $("tool").value;
+  if (!q) { setStatus("先输入关键词", true); return; }
+  $("run").disabled = true;
+  setStatus("调用中…");
+  var args = {};
+  if (tool === "search_cards") { args.query = q; }
+  else { args.id = q; }
+  var payload = { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool, arguments: args } };
+  mcpPost(payload).then(function (res) {
+    var evs = parseEvents(res.text);
+    var done = false;
+    for (var i = 0; i < evs.length; i++) {
+      var ev = evs[i];
+      if (ev.error) { setStatus("RPC 错误: " + JSON.stringify(ev.error), true); done = true; }
+      if (!ev.result) continue;
+      var content = ev.result.content || [];
+      var rawText = "";
+      var img = null;
+      for (var c = 0; c < content.length; c++) {
+        var item = content[c];
+        if (item.type === "text") rawText = item.text;
+        if (item.type === "image" && item.data) img = item;
+      }
+      $("mcp-raw").textContent = rawText;
+      var cards = $("mcp-cards");
+      cards.innerHTML = "";
+      if (img) {
+        cards.innerHTML = '<img alt="card" src="data:' + esc(img.mimeType) + ';base64,' + img.data + '">';
+        $("mcp-meta").textContent = "HTTP " + res.status + " · 图片 " + (img.data.length / 1024).toFixed(1) + " KB(base64)";
+      } else if (rawText) {
+        var parsed = null;
+        try { parsed = JSON.parse(rawText); } catch (e) {}
+        var resList = (parsed && parsed.result) || [];
+        if (Array.isArray(resList)) {
+          cards.innerHTML = resList.slice(0, 40).map(renderMCPCard).join("");
+          $("mcp-meta").textContent = "HTTP " + res.status + " · 返回 " + resList.length + " 条 · next=" + (parsed && parsed.next);
+        } else {
+          cards.innerHTML = '<div class="row">单卡对象：' + esc(JSON.stringify(parsed).slice(0, 200)) + "</div>";
+          $("mcp-meta").textContent = "HTTP " + res.status + " · 对象";
+        }
+      } else {
+        cards.innerHTML = '<div class="row">（空响应）</div>';
+        $("mcp-meta").textContent = "HTTP " + res.status;
+      }
+      setStatus("完成");
+      done = true;
+    }
+    if (!done) setStatus("未解析到响应体（HTTP " + res.status + "）", true);
+  }).catch(function (e) {
+    setStatus("连接失败：" + e.message + "（18081 是否在运行？）", true);
+  }).then(function () { $("run").disabled = false; });
+}
+
+function runLocal() {
+  var q = $("q").value.trim();
+  if (!q) { setStatus("先输入关键词", true); return; }
+  $("local").disabled = true;
+  setStatus("本地查询中…");
+  fetch("/api/search?q=" + encodeURIComponent(q) + "&limit=50")
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var rows = d.result || [];
+      $("local-cards").innerHTML = rows.map(renderLocalCard).join("") || '<div class="row">无匹配</div>';
+      $("local-meta").textContent = "本地 cards.db · " + rows.length + " 条";
+      setStatus("完成");
+    })
+    .catch(function (e) { setStatus("本地查询失败：" + e.message, true); })
+    .then(function () { $("local").disabled = false; });
+}
+
+function health() {
+  setStatus("连接 MCP 服务器…");
+  mcpPost({ jsonrpc: "2.0", id: 1, method: "initialize",
+            params: { protocolVersion: "2025-03-26", capabilities: {},
+                      clientInfo: { name: "playground", version: "0.1" } } })
+    .then(function (res) {
+      var evs = parseEvents(res.text);
+      var pv = null;
+      for (var i = 0; i < evs.length; i++) if (evs[i].result && evs[i].result.protocolVersion) pv = evs[i].result.protocolVersion;
+      setStatus("MCP 已连接（protocol " + (pv || "?") + "），输入关键词试试");
+    })
+    .catch(function (e) { setStatus("MCP 18081 未启动：" + e.message, true); });
+}
+
+$("run").onclick = runMCP;
+$("local").onclick = runLocal;
+$("q").addEventListener("keydown", function (e) { if (e.key === "Enter") runMCP(); });
+health();
+</script>
+</body>
+</html>

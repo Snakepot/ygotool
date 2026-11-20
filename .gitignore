@@ -25,6 +25,10 @@ dist/
 examples/*.csv
 eval/result.csv
 
+# ---- 个人工作区（简历、学习笔记等，与项目功能无关，不上传）----
+workspace01/
+workspace02/
+
 # ---- 系统 ----
 .DS_Store
 Thumbs.db
