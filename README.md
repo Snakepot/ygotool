@@ -1,8 +1,11 @@
 # ygotool
 
-基于 [ygocdb.com](https://ygocdb.com) 官方 API 的本地卡牌工具 + 游戏王卡牌 Agent。
-同时是一个**学习型项目**：把 RAG 切分 / Few-shot / Temperature / Token 控制 / 微调数据导出
-做成可演示、可调参、能看清内部行为的模块。
+基于 [ygocdb.com](https://ygocdb.com)  API 的本地卡牌工具 + 游戏王卡牌 Agent。
+做这个主要是因为无字段的各种妙妙工具找起来不太方便以及一般的查询方式只能做到单纯地匹配
+该项目主要作为一个**学习型项目**：学习 RAG 切分 / Few-shot / Temperature / Token 控制 / 微调数据导出
+并将它们做成可演示、可调参、能看清内部行为的模块。
+目前已经可以做到基本的卡牌信息/Q&A搜索，以及识别一些常用的cost并区分cost和效果，并据此进行查询。
+
 
 ## 功能
 
