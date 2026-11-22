@@ -334,7 +334,8 @@ class CardAgent:
             for tc in res.tool_calls:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 name = fn.get("name", "")
-                if total_calls >= self.MAX_TOOL_CALLS:
+                if total_calls >= self.MAX_TOOL_CALLS: # 先前达到上限会直接跳出，剩下的 tool_call 没有任何回复
+                    # 因为function-calling 的对话格式是一个严格配对的序列，这会导致调用留在 assistant 消息里，却没有任何 tool 回复，协议违法
                     # OpenAI 协议要求每个 tool_call 都有对应 tool 消息；未执行的补占位，
                     # 否则消息序列非法（严格 API 会报协议错）。
                     msgs.append(Message(role="tool",
@@ -382,11 +383,12 @@ class CardAgent:
         total_calls = 0
         force_final = False
         got_answer = False  # 是否已流式吐出最终答（自然收敛 or force_final 轮）
-        got_content = False  # 本轮是否真的吐出过 content（只吐 reasoning 不算收敛）
         # 第 1 轮路由关 thinking 秒回；拿到工具结果的后续轮次开深思（ruling），
         # 否则自然收敛的最终答会在 thinking 关闭状态下产出。force_final 收尾轮同样开。
         for it in range(self.MAX_ITERS):
             tool_calls = None
+            got_content = False  # 本轮的"内容产物"标记：只吐 reasoning 不算收敛；按轮重置，
+                                 # 避免上一轮（带工具调用的轮）吐过的提示性 content 掩盖本轮空答
             for ev in self.llm.stream(msgs, temperature=temp, max_tokens=mt,
                                       thinking=th if (force_final or it > 0) else False,
                                       tools=None if force_final else TOOLS):
@@ -405,7 +407,7 @@ class CardAgent:
             if not tool_calls or force_final:
                 if got_content:
                     got_answer = True
-                    break  # 无工具调用且已吐 content = 最终答
+                    break  # 无工具调用且本轮吐过 content = 最终答
                 break  # 只吐了 reasoning/空内容：不置 got_answer，交给下方兜底补齐
             msgs.append(Message(role="assistant", content="", tool_calls=tool_calls))
             for tc in tool_calls:
