@@ -313,6 +313,13 @@ class CardAgent:
         trace = AgentTrace(task=task)
         msgs = self._react_messages(question, task, num_few_shots, persona, history)
         temp, mt, th = self._react_params(task, thinking, temperature, max_tokens)
+        # 预算：默认用注入的 budgeter；调用方传了 max_context 时临时覆盖（与 _prepare 一致）
+        budgeter = self.budgeter
+        if max_context is not None:
+            budgeter = TokenBudgeter(max_context=max_context,
+                                     reserve_completion=self.budgeter.reserve_completion)
+        q_idx = len(msgs) - 1              # 当前问题位置（预算裁剪时保护）
+        question_msg = msgs[q_idx]
         usage = {"prompt": 0, "completion": 0, "total": 0}
         answer = ""
         total_calls = 0
@@ -320,6 +327,10 @@ class CardAgent:
         # 第 1 轮只做工具路由（关 thinking 秒回）；拿到工具结果的后续轮次恢复深思（ruling），
         # 否则"模型自然收敛直接作答"的最终答会在 thinking 关闭状态下产出，与设计意图相悖。
         for it in range(self.MAX_ITERS):
+            # P0-1：每轮调用前按预算裁剪消息序列（按协议块裁剪，tool_calls 与 tool 结果不拆散）
+            msgs, report = budgeter.fit_messages(msgs, q_idx, reserve_completion=mt)
+            trace.budget = report
+            q_idx = next(i for i, m in enumerate(msgs) if m is question_msg)
             res = self.llm.chat(msgs, temperature=temp, max_tokens=mt,
                                 thinking=th if (force_final or it > 0) else False,
                                 tools=None if force_final else TOOLS)
@@ -362,6 +373,8 @@ class CardAgent:
         if not answer:
             msgs.append(Message(role="user",
                                 content="(已达到工具调用轮数上限，请基于已获取信息直接给出最终回复，不要再调工具)"))
+            msgs, report = budgeter.fit_messages(msgs, q_idx, reserve_completion=mt)
+            trace.budget = report
             res = self.llm.chat(msgs, temperature=temp, max_tokens=mt, thinking=th, tools=None)
             for key in usage:
                 usage[key] += res.usage.get(key, 0)
@@ -378,6 +391,15 @@ class CardAgent:
         trace = AgentTrace(task=task)
         msgs = self._react_messages(question, task, num_few_shots, persona, history)
         temp, mt, th = self._react_params(task, thinking, temperature, max_tokens)
+        budgeter = self.budgeter
+        if max_context is not None:
+            budgeter = TokenBudgeter(max_context=max_context,
+                                     reserve_completion=self.budgeter.reserve_completion)
+        q_idx = len(msgs) - 1
+        question_msg = msgs[q_idx]
+        msgs, report = budgeter.fit_messages(msgs, q_idx, reserve_completion=mt)
+        trace.budget = report
+        q_idx = next(i for i, m in enumerate(msgs) if m is question_msg)
         yield trace.to_event()
         usage = {"prompt": 0, "completion": 0, "total": 0}
         total_calls = 0
@@ -389,6 +411,10 @@ class CardAgent:
             tool_calls = None
             got_content = False  # 本轮的"内容产物"标记：只吐 reasoning 不算收敛；按轮重置，
                                  # 避免上一轮（带工具调用的轮）吐过的提示性 content 掩盖本轮空答
+            # P0-1：每轮调用前按预算裁剪消息序列（按协议块裁剪，tool_calls 与 tool 结果不拆散）
+            msgs, report = budgeter.fit_messages(msgs, q_idx, reserve_completion=mt)
+            trace.budget = report
+            q_idx = next(i for i, m in enumerate(msgs) if m is question_msg)
             for ev in self.llm.stream(msgs, temperature=temp, max_tokens=mt,
                                       thinking=th if (force_final or it > 0) else False,
                                       tools=None if force_final else TOOLS):
@@ -404,11 +430,11 @@ class CardAgent:
                 else:
                     yield ev  # reasoning / error 等
             trace.iterations = it + 1
-            if not tool_calls or force_final:
+            if not tool_calls or force_final:  # 先前是：本轮没有 tool_calls 就认为最终答案已经流出，会导致模型什么都没答
                 if got_content:
                     got_answer = True
                     break  # 无工具调用且本轮吐过 content = 最终答
-                break  # 只吐了 reasoning/空内容：不置 got_answer，交给下方兜底补齐
+                break  # 只吐了 reasoning/空内容：不置 got_answer，交给下方兜底补齐(原本没有这个break会掉出循环，不触发兜底)
             msgs.append(Message(role="assistant", content="", tool_calls=tool_calls))
             for tc in tool_calls:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
@@ -434,9 +460,11 @@ class CardAgent:
                 msgs.append(Message(role="user",
                                     content="(已达工具调用上限，请基于已获取信息直接给出最终回复，不要再调工具)"))
         # 循环耗尽（模型一直调工具没收敛）或撞上限没机会收尾：补一次无 tools 流式逼出最终答
-        if not got_answer:
+        if not got_answer:  # 任何"没成功产出正文"的退出都会走到这里
             msgs.append(Message(role="user",
                                 content="(请基于已获取信息直接给出最终回复，不要再调工具)"))
+            msgs, report = budgeter.fit_messages(msgs, q_idx, reserve_completion=mt)
+            trace.budget = report
             for ev in self.llm.stream(msgs, temperature=temp, max_tokens=mt,
                                       thinking=th, tools=None):
                 if ev.get("type") == "usage":

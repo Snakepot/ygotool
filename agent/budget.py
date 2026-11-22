@@ -127,3 +127,119 @@ class TokenBudgeter:
             nid = ch.meta.get("id") or ch.meta.get("cid") or "?"
             lines.append(f"[{i}] (相关度{score:.2f}, 来源:{src}#{nid})\n{ch.text}")
         return "\n\n".join(lines)
+
+    # ---- ReAct 路径：对消息序列做"按块裁剪"（P0-1）----
+    def fit_messages(self, messages: list[Message], q_idx: int,
+                     reserve_completion: int | None = None
+                     ) -> tuple[list[Message], BudgetReport]:
+        """对 ReAct 的多轮消息序列做预算裁剪，保证 tool_calls 与 tool 结果不被拆散。
+
+        与 fit() 的区别：fit() 装填"检索上下文"；这里裁剪"消息序列"。
+        消息序列结构：system + few-shot/历史 + 当前问题 + 若干轮 assistant(tool_calls)/tool。
+        **不能按单条消息丢**——assistant 的 tool_calls 与其 tool 回复必须整体保留或整体丢弃，
+        否则违反 function-calling 协议（P0-3 同源问题）。
+
+        优先级（与 fit 一致）：system > 当前问题 > 最近轮次 > few-shot/历史。
+        裁剪顺序：先丢最旧的工具轮（保留最近一轮），再丢 few-shot/历史；system 与问题绝不丢。
+        q_idx：当前问题在 messages 中的下标；返回新的 q_idx'（问题位置可能因裁剪前移）。
+        """
+        usable = self.max_context - (reserve_completion if reserve_completion is not None
+                                     else self.reserve_completion)
+
+        def size(m: Message) -> int:
+            return self.count(m.content or "") + 4  # +4 近似 role/分隔开销
+
+        total = sum(size(m) for m in messages)
+        q_idx = max(0, min(q_idx, len(messages) - 1))
+        question = messages[q_idx] if messages else None
+        tokens_system = size(messages[0]) if messages else 0
+        tokens_query = size(question) if question is not None else 0
+
+        def build_report(kept: list[Message], qpos: int) -> BudgetReport:
+            kept_tools = [m for m in kept if m.role == "tool"]
+            all_tools = [m for m in messages if m.role == "tool"]
+            head = kept[1:qpos] if qpos > 0 else []
+            return BudgetReport(
+                tokens_system=tokens_system, tokens_query=tokens_query,
+                shots_kept=sum(1 for m in head if m.role == "user"),
+                shots_total=sum(1 for m in messages[1:q_idx] if m.role == "user"),
+                chunks_kept=len(kept_tools), chunks_total=len(all_tools),
+                tokens_retrieved=sum(size(m) for m in kept_tools),
+                tokens_total=sum(size(m) for m in kept),
+                max_context=self.max_context,
+                within_budget=sum(size(m) for m in kept) <= usable,
+            )
+
+        if total <= usable:
+            return messages, build_report(messages, q_idx)
+
+        # 构建可丢弃单元（块）：head = system 与问题之间（few-shot/历史，成对）；tail = 问题之后（工具轮/通知）
+        head_units: list[list[int]] = []
+        i = 1
+        while i < q_idx:
+            if (i + 1 < q_idx and messages[i].role == "user"
+                    and messages[i + 1].role == "assistant"
+                    and not messages[i + 1].tool_calls):
+                head_units.append([i, i + 1])
+                i += 2
+            else:
+                head_units.append([i])
+                i += 1
+
+        tail_units: list[tuple[str, list[int]]] = []
+        j = q_idx + 1
+        while j < len(messages):
+            if messages[j].role == "assistant" and messages[j].tool_calls:
+                k = j + 1
+                while k < len(messages) and messages[k].role == "tool":
+                    k += 1
+                tail_units.append(("tool", list(range(j, k))))  # 整个工具轮作为一个块
+                j = k
+            elif messages[j].role == "user":
+                tail_units.append(("notice", [j]))              # 撞上限/收尾通知
+                j += 1
+            else:
+                tail_units.append(("other", [j]))
+                j += 1
+
+        keep = [True] * len(messages)
+        keep[q_idx] = True  # 保护当前问题
+
+        def recalc() -> int:
+            return sum(size(m) for idx, m in enumerate(messages) if keep[idx])
+
+        cur = total
+        # 1) 先丢"通知"（撞上限/收尾的 user 提示）：它们只是指令，丢了对协议无影响
+        for kind, unit in tail_units:
+            if cur <= usable:
+                break
+            if kind != "notice":
+                continue
+            for x in unit:
+                keep[x] = False
+            cur = recalc()
+        # 2) 再丢最旧的工具轮（保留最近一轮）
+        tool_units = [u for k, u in tail_units if k == "tool"]
+        for unit in tool_units[:-1]:
+            if cur <= usable:
+                break
+            for x in unit:
+                keep[x] = False
+            cur = recalc()
+        # 3) 再丢 few-shot / 历史（从最旧开始）——优先于"最近一轮工具结果"
+        for unit in head_units:
+            if cur <= usable:
+                break
+            for x in unit:
+                keep[x] = False
+            cur = recalc()
+        # 4) 仍超预算：连最近一轮工具结果也丢（保 system + 问题，硬保底）
+        if cur > usable:
+            for unit in tool_units[-1:]:
+                for x in unit:
+                    keep[x] = False
+            cur = recalc()
+
+        kept = [m for idx, m in enumerate(messages) if keep[idx]]
+        qpos = kept.index(question) if question in kept else q_idx
+        return kept, build_report(kept, qpos)
