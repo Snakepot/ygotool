@@ -332,10 +332,15 @@ class CardAgent:
             # 模型要调工具：回灌 assistant(tool_calls) + 各 tool 结果
             msgs.append(Message(role="assistant", content=res.text or "", tool_calls=res.tool_calls))
             for tc in res.tool_calls:
-                if total_calls >= self.MAX_TOOL_CALLS:
-                    break  # 达累计上限，不再执行新工具
-                fn = tc.get("function", {})
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 name = fn.get("name", "")
+                if total_calls >= self.MAX_TOOL_CALLS:
+                    # OpenAI 协议要求每个 tool_call 都有对应 tool 消息；未执行的补占位，
+                    # 否则消息序列非法（严格 API 会报协议错）。
+                    msgs.append(Message(role="tool",
+                                        content="(已达工具调用上限，该工具未执行)",
+                                        tool_call_id=tc.get("id"), name=name))
+                    continue
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
@@ -377,6 +382,7 @@ class CardAgent:
         total_calls = 0
         force_final = False
         got_answer = False  # 是否已流式吐出最终答（自然收敛 or force_final 轮）
+        got_content = False  # 本轮是否真的吐出过 content（只吐 reasoning 不算收敛）
         # 第 1 轮路由关 thinking 秒回；拿到工具结果的后续轮次开深思（ruling），
         # 否则自然收敛的最终答会在 thinking 关闭状态下产出。force_final 收尾轮同样开。
         for it in range(self.MAX_ITERS):
@@ -390,18 +396,27 @@ class CardAgent:
                 elif t == "usage":
                     for key in usage:
                         usage[key] += ev["usage"].get(key, 0)
+                elif t == "content":
+                    got_content = True
+                    yield ev  # content 实时转发
                 else:
-                    yield ev  # reasoning/content 实时转发
+                    yield ev  # reasoning / error 等
             trace.iterations = it + 1
             if not tool_calls or force_final:
-                got_answer = True
-                break  # 无工具调用 = 最终答（已流式吐出）
+                if got_content:
+                    got_answer = True
+                    break  # 无工具调用且已吐 content = 最终答
+                break  # 只吐了 reasoning/空内容：不置 got_answer，交给下方兜底补齐
             msgs.append(Message(role="assistant", content="", tool_calls=tool_calls))
             for tc in tool_calls:
-                if total_calls >= self.MAX_TOOL_CALLS:
-                    break
-                fn = tc.get("function", {})
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 name = fn.get("name", "")
+                if total_calls >= self.MAX_TOOL_CALLS:
+                    # 协议要求：每个 tool_call 都要有对应 tool 消息；未执行的补占位
+                    msgs.append(Message(role="tool",
+                                        content="(已达工具调用上限，该工具未执行)",
+                                        tool_call_id=tc.get("id"), name=name))
+                    continue
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
