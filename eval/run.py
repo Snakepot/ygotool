@@ -39,6 +39,7 @@ def judge_correctness(judge_llm: LLMClient, question: str, expected: str,
     """LLM-as-judge：判断 actual 与 expected 裁定结论是否语义一致。
     返回 (True/False/None, 理由)；None 表示 judge 输出无法判定（记为 judge 异常，
     不混入正确率——旧实现 `"一致" in "不一致"` 恒真，会把"不一致"判成一致）。"""
+    #只服务于判例/评测集 是回归测试 + 质量度量，比起普通的测试，还有对AI行为的衡量评价
     sys_p = ("你是游戏王裁定裁判。给定问题、标准答案、模型答案，判断两者【裁定结论】是否"
              "语义一致（能否触发/能否发动/胜负等结论相同即可，措辞差异不重要）。"
              "第一行只输出 YES 或 NO（不要输出其它内容），第二行起简述理由。")
@@ -56,6 +57,12 @@ def judge_correctness(judge_llm: LLMClient, question: str, expected: str,
         return False, text
     return None, text
 
+""" 先前
+text = res.text.strip()
+    first = text.splitlines()[0].strip().upper() if text else ""
+    ok = first.startswith("YES") or "一致" in first      # ←问题在这一行，不一致也包含一致二字，导致判错也会返回判对，因此改为yes/no
+    return ok, text
+"""
 
 def check_citations(answer: str, must_cite: list[str]) -> dict:
     """核查 must_cite 是否出现在答案。卡 id 同时认 '卡牌#<id>' 与裸 '<id>'。"""
