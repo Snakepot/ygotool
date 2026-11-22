@@ -35,12 +35,13 @@ def make_agent(store: CardStore, retriever) -> CardAgent:
 
 
 def judge_correctness(judge_llm: LLMClient, question: str, expected: str,
-                      actual: str) -> tuple[bool, str]:
+                      actual: str) -> tuple[bool | None, str]:
     """LLM-as-judge：判断 actual 与 expected 裁定结论是否语义一致。
-    返回 (是否一致, 理由)。"""
+    返回 (True/False/None, 理由)；None 表示 judge 输出无法判定（记为 judge 异常，
+    不混入正确率——旧实现 `"一致" in "不一致"` 恒真，会把"不一致"判成一致）。"""
     sys_p = ("你是游戏王裁定裁判。给定问题、标准答案、模型答案，判断两者【裁定结论】是否"
              "语义一致（能否触发/能否发动/胜负等结论相同即可，措辞差异不重要）。"
-             "第一行输出 YES 或 NO，第二行起简述理由。")
+             "第一行只输出 YES 或 NO（不要输出其它内容），第二行起简述理由。")
     user = (f"问题：{question}\n标准答案：{expected}\n模型答案：{actual}\n"
             f"判断两者裁定结论是否一致。")
     res = judge_llm.chat([Message(role="system", content=sys_p),
@@ -48,8 +49,12 @@ def judge_correctness(judge_llm: LLMClient, question: str, expected: str,
                          temperature=0.0, max_tokens=512, thinking=False)
     text = res.text.strip()
     first = text.splitlines()[0].strip().upper() if text else ""
-    ok = first.startswith("YES") or "一致" in first
-    return ok, text
+    # 严格白名单：只认首行 YES/NO；其余（含"不一致"）一律视为 judge 异常
+    if first.startswith("YES"):
+        return True, text
+    if first.startswith("NO"):
+        return False, text
+    return None, text
 
 
 def check_citations(answer: str, must_cite: list[str]) -> dict:
@@ -82,7 +87,7 @@ def main():
                           api_key=SETTINGS.llm_api_key, model=SETTINGS.llm_model)
 
     rows = []
-    n_correct, n_cite_total, n_cite_hit = 0, 0, 0
+    n_correct, n_judged, n_judge_err, n_cite_total, n_cite_hit = 0, 0, 0, 0, 0
     for i, c in enumerate(evals, 1):
         q = c["q"]; expected = c.get("ruling", ""); must = c.get("must_cite", []) or []
         print(f"\n[{i}/{len(evals)}] {c['id']} {c['task']}: {q[:40]}")
@@ -96,20 +101,26 @@ def main():
         ok, reason = judge_correctness(judge_llm, q, expected, answer)
         cite = check_citations(answer, must)
         cite_hit = sum(1 for v in cite.values() if v)
-        n_correct += 1 if ok else 0
+        if ok is None:
+            n_judge_err += 1
+            verdict = "JUDGE_ERROR"
+        else:
+            n_judged += 1
+            n_correct += 1 if ok else 0
+            verdict = "YES" if ok else "NO"
         n_cite_total += len(cite); n_cite_hit += cite_hit
-        print(f"  正确: {ok} | 引用 {cite_hit}/{len(cite)} | tools={trace.tools if trace else []}")
+        print(f"  判定: {verdict} | 引用 {cite_hit}/{len(cite)} | tools={trace.tools if trace else []}")
         rows.append({"id": c["id"], "task": c.get("task", ""),
                      "question": q, "expected": expected, "answer": answer,
-                     "correct": "YES" if ok else "NO", "judge_reason": reason,
+                     "correct": verdict, "judge_reason": reason,
                      "must_cite": ";".join(must),
                      "cited": ";".join(f"{k}:{'Y' if v else 'N'}" for k, v in cite.items())})
 
-    acc = n_correct / len(evals) if evals else 0
+    acc = n_correct / n_judged if n_judged else 0
     cite_rate = n_cite_hit / n_cite_total if n_cite_total else 0
     print("\n=== 汇总 ===")
-    print(f"判例数: {len(evals)}")
-    print(f"正确率: {n_correct}/{len(evals)} = {acc:.1%}")
+    print(f"判例数: {len(evals)}（可判定 {n_judged}，judge 异常 {n_judge_err}）")
+    print(f"正确率: {n_correct}/{n_judged} = {acc:.1%}")
     print(f"引用率: {n_cite_hit}/{n_cite_total} = {cite_rate:.1%}")
 
     out = Path(__file__).parent / "result.csv"
