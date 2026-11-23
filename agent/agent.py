@@ -48,6 +48,8 @@ class AgentTrace:
     task: str
     tools: list[str] = field(default_factory=list)
     tool_results: dict = field(default_factory=dict)
+    # P1-1：统一语义——实际进入最终上下文的检索/工具素材条数（预算裁剪后）。
+    # mock 路径=prompt 中保留的 chunk 数；ReAct 路径=保留的 tool 结果条数。
     retrieved_total: int = 0
     budget: BudgetReport | None = None
     llm_usage: dict = field(default_factory=dict)
@@ -62,13 +64,15 @@ class AgentTrace:
         return "\n".join(lines)
 
     def to_event(self) -> dict:
-        """供流式端点发送的 trace 事件。"""
+        """供流式端点发送的 trace 事件（首尾两处都用它，形状一致）。"""
         return {
             "type": "trace",
             "task": self.task,
             "tools": self.tools,
             "tool_results": self.tool_results,
             "retrieved_total": self.retrieved_total,
+            "iterations": self.iterations,
+            "llm_usage": self.llm_usage,
             "budget": asdict(self.budget) if self.budget else None,
         }
 
@@ -218,7 +222,6 @@ class CardAgent:
         else:
             raise ValueError(f"未知任务: {task}")
 
-        trace.retrieved_total = len(retrieved)
         retrieved.sort(key=lambda x: x[1], reverse=True)
 
         budgeter = self.budgeter
@@ -227,6 +230,9 @@ class CardAgent:
                                      reserve_completion=self.budgeter.reserve_completion)
         messages, report = budgeter.fit(task, question, num_few_shots, retrieved, persona, history)
         trace.budget = report
+        # P1-1：retrieved_total 统一为"进入最终上下文的素材条数"（预算裁剪后），
+        # 与 ReAct 路径语义对齐；检索候选总数看 budget.chunks_total。
+        trace.retrieved_total = report.chunks_kept
 
         temp = self.settings.default_temperature if (temperature is None and self.settings) else (temperature or 0.2)
         mt = max_tokens or (self.settings.default_max_tokens if self.settings else 1024)
@@ -381,7 +387,8 @@ class CardAgent:
             answer = res.text or "(工具调用达上限，未能完成推理)"
         trace.llm_usage = usage
         trace.answer = answer
-        trace.retrieved_total = len(trace.tools)
+        # P1-1：与 mock 路径统一——retrieved_total = 最终上下文中保留的素材条数
+        trace.retrieved_total = trace.budget.chunks_kept if trace.budget else len(trace.tools)
         return answer, trace
 
     def _react_stream(self, question, task, num_few_shots, k, max_context,
@@ -405,6 +412,7 @@ class CardAgent:
         total_calls = 0
         force_final = False
         got_answer = False  # 是否已流式吐出最终答（自然收敛 or force_final 轮）
+        answer_parts: list[str] = []  # 累积已流出的正文，写回 trace.answer
         # 第 1 轮路由关 thinking 秒回；拿到工具结果的后续轮次开深思（ruling），
         # 否则自然收敛的最终答会在 thinking 关闭状态下产出。force_final 收尾轮同样开。
         for it in range(self.MAX_ITERS):
@@ -424,8 +432,10 @@ class CardAgent:
                 elif t == "usage":
                     for key in usage:
                         usage[key] += ev["usage"].get(key, 0)
+                    yield ev  # 与 mock 路径一致：usage 事件转发给前端
                 elif t == "content":
                     got_content = True
+                    answer_parts.append(ev.get("text", ""))
                     yield ev  # content 实时转发
                 else:
                     yield ev  # reasoning / error 等
@@ -470,13 +480,19 @@ class CardAgent:
                 if ev.get("type") == "usage":
                     for key in usage:
                         usage[key] += ev["usage"].get(key, 0)
+                    yield ev
+                elif ev.get("type") == "content":
+                    answer_parts.append(ev.get("text", ""))
+                    yield ev
                 else:
                     yield ev
         trace.llm_usage = usage
-        trace.answer = ""
-        trace.retrieved_total = len(trace.tools)
-        yield {"type": "trace", "tools": trace.tools, "tool_results": trace.tool_results,
-               "retrieved_total": trace.retrieved_total, "iterations": trace.iterations}
+        trace.answer = "".join(answer_parts)
+        # P1-1：与 mock 路径统一——retrieved_total = 最终上下文中保留的素材条数
+        trace.retrieved_total = trace.budget.chunks_kept if trace.budget else len(trace.tools)
+        # 最终 trace 与首帧同形（task/tools/budget/iterations/llm_usage 全量），
+        # 前端无需区分 mock/ReAct 两条路径的字段差异。
+        yield trace.to_event()
         yield {"type": "done"}
 
     def _link_and_fetch(self, question: str, rt: ToolRuntime,

@@ -211,12 +211,14 @@ async function sendChat() {
         if (ev.type === "trace") {
           const chips = (ev.tools || []).map(t => `<span class="chip">${t}</span>`).join("");
           if (ev.budget) {
+            // P1-1：mock 与 ReAct 路径的 trace 现在同形（都带 budget/iterations/llm_usage），统一展示
             const bk = ev.budget;
-            traceEl.innerHTML = `${chips} 检索${ev.retrieved_total||0} | 预算 ${bk.tokens_total||0}/${bk.max_context} ${bk.within_budget ? "✓" : "超"}`;
+            const it = ev.iterations ? ` · 迭代${ev.iterations}轮` : "";
+            traceEl.innerHTML = `${chips} 素材${ev.retrieved_total||0}条${it} | 预算 ${bk.tokens_total||0}/${bk.max_context} ${bk.within_budget ? "✓" : "超"}`;
           } else {
-            // ReAct 路径：无 budget，显示迭代轮数+工具链
-            const it = ev.iterations ? ` 迭代${ev.iterations}轮` : "";
-            traceEl.innerHTML = `${chips}${it} ${ev.retrieved_total!=null ? "调用"+ev.retrieved_total : ""}`;
+            // 兜底：仅防御旧服务端；正常前端收到的 trace 一定带 budget
+            const it = ev.iterations ? ` · 迭代${ev.iterations}轮` : "";
+            traceEl.innerHTML = `${chips}${it} ${ev.retrieved_total!=null ? "素材"+ev.retrieved_total+"条" : ""}`;
           }
         } else if (ev.type === "reasoning") {
           reasonAcc += ev.text; rBody.textContent = reasonAcc;
