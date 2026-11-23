@@ -234,7 +234,10 @@ class CardAgent:
         # 与 ReAct 路径语义对齐；检索候选总数看 budget.chunks_total。
         trace.retrieved_total = report.chunks_kept
 
-        temp = self.settings.default_temperature if (temperature is None and self.settings) else (temperature or 0.2)
+        # P1-2：显式传 temperature=0.0 必须生效——旧写法 `temperature or 0.2` 会把 0.0 吞成 0.2，
+        # 温度扫描实验在 0.0 档失真（mock 的噪声规则、真实模型的确定性都依赖它）。
+        temp = (temperature if temperature is not None
+                else (self.settings.default_temperature if self.settings else 0.2))
         mt = max_tokens or (self.settings.default_max_tokens if self.settings else 1024)
         # 列举型查询（按效果找卡）不需要深思：search_by_text 已给候选，关 thinking 省 token
         th = thinking if thinking is not None else (task == "ruling" and not list_intent)
