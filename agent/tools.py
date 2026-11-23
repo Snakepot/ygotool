@@ -654,7 +654,12 @@ class ToolRuntime:
             return c.get("tier", 2 if c.get("specific") else 0)
 
         if mods or qz:
-            SPEC_SAMPLE, NEAR_SAMPLE = 30, 15
+            # 名单不大（≤60 张）时全量渲染：让 LLM 能完整列出，避免"只答前 30 张"与评测金标错位；
+            # 上百张的大名单仍截断，完整名单走左栏浏览面板（控制 prompt token）。
+            FULL = total <= 60
+            SPEC_SAMPLE = 60 if FULL else 30
+            NEAR_SAMPLE = 60 if FULL else 15
+            gen_n = 60 if FULL else 10
             spec = [c for c in modern + uncertain if tier(c) == 2]
             near = [c for c in modern + uncertain if tier(c) == 1]
             gen_m = [c for c in modern if tier(c) == 0]
@@ -677,15 +682,16 @@ class ToolRuntime:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
             if gen_m or gen_u:
                 lines.append("【通用（未限定该条件，可自由选择对象/目标）】:")
-                for c in gen_m[:SAMPLE]:
+                for c in gen_m[:gen_n]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
-                for c in gen_u[:SAMPLE]:
+                for c in gen_u[:gen_n]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
             shown = (len(spec[:SPEC_SAMPLE]) + len(near[:NEAR_SAMPLE])
-                     + len(gen_m[:SAMPLE]) + len(gen_u[:SAMPLE]))
+                     + len(gen_m[:gen_n]) + len(gen_u[:gen_n]))
             if total > shown:
                 lines.append(f"（其余 {total - shown} 张见左栏完整名单）")
         else:
+            SAMPLE = total if total <= 60 else 10
             if modern:
                 lines.append("【现代】:")
                 for c in modern[:SAMPLE]:
@@ -694,6 +700,8 @@ class ToolRuntime:
                 lines.append("【未确认(90X前旧措辞,须查FAQ)】:")
                 for c in uncertain[:SAMPLE]:
                     lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+            if total > SAMPLE:
+                lines.append(f"（其余 {total - SAMPLE} 张见左栏完整名单）")
         return "\n".join(lines)
 
     @staticmethod

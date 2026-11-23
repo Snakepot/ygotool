@@ -18,6 +18,18 @@ ACTIVATION = "才能发动"
 # 现代 PSCT 结构标记：有编号条款 或 有"才能发动"
 _STRUCTURED = re.compile(r"[①-⑫⑬⑭⑮⑯⑰]|才能发动")
 
+# 修饰语剔除（动作单元打标用）：「从X特殊召唤的…」是相对修饰语，不是该单元里送墓/除外等动作的来源。
+# 例：哀悼傀儡「把最多有从额外卡组特殊召唤的对方场上的怪兽数量＋1张的…从卡组送去墓地」
+# ——「额外卡组」只是「特殊召唤」的来源，真正送墓来源是「卡组」；不剔会把整句的动词位置
+# 截在「特殊召唤」上，从而把「从额外卡组」误当送墓来源（query 从额外卡组送墓时召回噪音）。
+# 只匹配带「的」的修饰句（「从额外卡组特殊召唤1只怪兽」是真实动作，不能剔）。
+_SRC_MODIFIER_RE = re.compile(r"从[^，。；、]{1,10}?(?:特殊召唤|召唤)的")
+
+
+def _strip_src_modifiers(text: str) -> str:
+    """去掉「从X特殊召唤的…」修饰语，返回可用于动作识别/来源区提取的文本。"""
+    return _SRC_MODIFIER_RE.sub("", text or "")
+
 
 def is_structured(desc: str | None) -> bool:
     """该文本是否为现代 PSCT 结构（有编号条款或"才能发动"）。无结构→旧措辞，cost/效果分不出。"""
@@ -235,20 +247,23 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                     unit = unit.strip()
                     if not unit or _NEG_RE.search(unit):
                         continue
-                    acts = match_actions(unit)
+                    # 先剔「从X特殊召唤的…」修饰语再识别动作/来源：
+                    # 否则动词位置被修饰语里的「特殊召唤」截断，来源区错取成「从额外卡组」
+                    clean = _strip_src_modifiers(unit) or unit
+                    acts = match_actions(clean)
                     if not acts:
                         continue
-                    src = extract_object_source(unit) or extract_source(unit)
-                    tgts = extract_targets(unit)
+                    src = extract_object_source(clean) or extract_source(clean)
+                    tgts = extract_targets(clean)
                     # 来源区集合：动词之前的片段；动词在句首时，解放/丢弃类取动词后的区域词
-                    pos = first_verb_pos(unit)
+                    pos = first_verb_pos(clean)
                     if pos is not None:
-                        zones = zones_in_text(unit[:pos])
+                        zones = zones_in_text(clean[:pos])
                         if not zones and pos == 0 and any(
                                 a in ("release", "discard_hand") for a in acts):
-                            zones = zones_in_text(unit)
+                            zones = zones_in_text(clean)
                     else:
-                        zones = zones_in_text(unit)
+                        zones = zones_in_text(clean)
                     if _ANAPHORA.search(unit):
                         if not src:
                             src = clause_source
