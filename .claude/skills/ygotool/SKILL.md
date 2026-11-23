@@ -47,7 +47,7 @@ ygotool/
 7. **race 解码错（龙族等）**：ygocdb `data.race` **非标准 YGOPro**（龙=0x2000 不是 0x80000）。→ 用 `codec.RACE` 表（从全量卡池反推），别照抄 constant.lua。attribute/type 是标准的。
 8. **Link 卡 level 解码错**：`data.level` 存的是 **Link 数值**（LINK-2→2），**不是箭头位掩码**；箭头只在 `text.types` 字符串。→ `decode_level` Link 分支返回 `{link: lv, markers: []}`；显示优先用 `text.types`。
 9. **citation 点不开/对不上**：引用混用 cid/id。→ `budget._render` 统一用密码 `id`（`meta["id"]` 优先），前端 `卡牌#<id>` 可点开详情。
-10. **枚举查询漏卡**：`find_cards_in_text`/search 有 cap（5 或 top-k）+ 同分 tie-break 随机 → 漏。→ 枚举类用 `search_by_effect`/`search_by_series`（全量返回不截断），不给 LLM 整块大名单（超预算被整体丢）→ 改"总数+前30样例"，全量走浏览端点。
+10. **枚举查询漏卡**：`find_cards_in_text`/search 有 cap（5 或 top-k）+ 同分 tie-break 随机 → 漏。→ 枚举类用 `search_by_effect`/`search_by_series`（全量返回不截断），不给 LLM 整块大名单（超预算被整体丢）→ 改"总数+样例"，全量走浏览端点（P1 后名单 ≤60 张全量渲染，超过才截断）。
 11. **`find_cards_in_text` 漏简称/子串**：片段匹配只对带分隔符卡名（神影依·米德拉什→米德拉什）有效，无分隔名（青眼白龙 vs 青眼）和错字（手牌/手札）漏。→ 已用 `SequenceMatcher` 最长公共子串改进；错字仍需模糊匹配或让 LLM 纠错。
 12. **`.bat` 报错 `>/dev/null` 不是命令**：linter 把 cmd 的 `>nul` 改成 bash 的 `>/dev/null`。→ .bat 里用 `>nul 2>&1`；测 .bat 用 PowerShell `.\ygotool.bat`（别用 bash `./x.bat`，会吃掉 `^|` 转义）。
 13. **后台服务没保住**：bash `cmd &` 会话结束进程没保。→ 用 `run_in_background=true` 或 `ygotool.bat`（`start /MIN`）。
@@ -64,7 +64,7 @@ ygotool/
 24. **特异度没落地（P03）**：「从卡组将等级3怪兽送入墓地」实际命中 339 张（含唯一限定 3星的基路伯），但基路伯排在 126 位、`_render_list` 只给前 15 → LLM 误答"未找到明确限定的卡"。→ `_query_modifiers`（等级/属性/种族）+ 每条结果 `specific` 标记排序 + `_render_list` 分组「★明确限定 / 通用」，精确匹配永远先呈现。
 25. **来源绑定粒度太粗**：「解放手卡」305 张里大量误召（次元魔法：那只怪兽解放，从手卡把…特殊召唤；死皇帝之陵墓：**不用**解放…手卡1只怪兽；念动力脉冲/熔岩龙：手卡出现在其它分句）。→ 新增 `tag_action_units`：cost/效果体各自按连词切动作单元，zone 只在单元内提取；否定词扩到 不用/无需/不需要/不进行；代词句只继承"区域+数量+「目标」"句式（`extract_object_source`）的 zone。search_by_action 改用它。
 26. **查询归一化**：等级3/N星/N星级 → N星；「从卡组」不匹配「额外卡组/融合卡组」（负向断言 `(?<!额外)(?<!融合)卡组`）；source 留空时自动从短语抽 zone 词。
-27. **别名表接线**：`agent/data/aliases.md` 由 `agent/data_loader.load_aliases/apply_aliases` 解析（格式：`- 别名A|别名B: 规范`、`regex: 模式 -> 替换`、`⏸` 开头跳过、`- （` 注释跳过）；`tools._normalize_query` 先跑别名再跑等级正则；`search_by_action/search_by_effect/search_effect_phrase` 入口都归一化。坑：别名 `通常怪→通常怪兽` 会撞已写好的「通常怪兽」变成「怪兽兽」→ 用 `(?!兽)` 负向断言；精确匹配组在 `_render_list` 要列全（上限 30，否则排第 23 位的目标卡 LLM 看不到）。
+27. **别名表接线**：`agent/data/aliases.md` 由 `agent/data_loader.load_aliases/apply_aliases` 解析（格式：`- 别名A|别名B: 规范`、`regex: 模式 -> 替换`、`⏸` 开头跳过、`- （` 注释跳过）；`tools._normalize_query` 先跑别名再跑等级正则；`search_by_action/search_by_effect/search_effect_phrase` 入口都归一化。坑：别名 `通常怪→通常怪兽` 会撞已写好的「通常怪兽」变成「怪兽兽」→ 用 `(?!兽)` 负向断言；精确匹配组在 `_render_list` 要列全（P1 后名单 ≤60 张全量渲染；旧上限 30 会把排第 23 位的目标卡截掉）。
 28. **"来源"被误当作查询区 / 次精确档（三档分级）**：用户问「从手卡把水属性怪兽送去墓地」时，① 查询短语里的「墓地」是**目的地**不是来源（`_zone_words_in_phrase` 曾把目的地算进来）；② 卡文「手卡·卡组」「手卡·场上（表侧表示）」离动作词太远，`手[牌卡][^。]{0,8}` 窗口匹配不到 → 波塞德拉深渊/轰海皇被漏。→ 用 `ontology.source_zones_from_phrase`（动词 `VERB_WORDS` 之前的片段才当来源）和 `first_verb_pos`（不用含来源的整条正则起点）；`tag_action_units` 记录每单元 `zones`（动作词前片段；动词在句首时仅解放/丢弃类取动词后区域词），代词句回退 clause 的 cost 区域；`send_hand_to_gy` 窗口放宽到 0,20 并新增「手卡·卡组/手卡·场上」组合匹配；连词表加「或/或者」（防「从手卡把钢核送去墓地**或**把手卡1只水属性怪兽给对方观看」这类跨动作串味）。三档：★精确（限定一致+来源一致）/◆次精确（限定一致但来源更宽，如手卡·卡组）/通用；`_render_list` 分三组，提示词要求回答补「此外，也有…来源更宽的卡」。
 29. **来源区被修饰语污染（「额外卡组」≠送墓来源）**：哀悼傀儡/炼狱的灾天「把最多有从额外卡组特殊召唤的对方场上的怪兽数量＋1张的…从卡组送去墓地」——「额外卡组」只是「特殊召唤」的来源，`first_verb_pos` 截在修饰语动词上 → 整句被当成「从额外卡组送墓」召回（query 噪音）。→ `effect_parser._SRC_MODIFIER_RE` 先剔「从X特殊召唤**的**」修饰语再识别动作与来源区（只剔带「的」的修饰；`从X特殊召唤1只怪兽` 是真实动作不能剔）。顺带：`_render_list` 名单 ≤60 张时全量渲染（原来 30/15 截断导致 LLM 只能列出前 30 张，与评测金标错位）；大名单仍截断、完整名单走左栏。
 

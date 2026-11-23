@@ -64,3 +64,15 @@ git checkout v0.1.0 -- web/server.py    # 把某版本下某文件取回到工�
 - `.env` 不在版本控制里，改配置前自己另存一份（或把配置项写进 `.env.example`，在 `.env` 填值）；
 - `cache/` 同理：卡池和索引用 `python cli.py refresh` / `build-index` 重新生成；
 - 不要把 `.env` 里的 Key 贴到 commit 消息、issue、聊天里。
+
+## 七、远程仓库与网络（本机特殊情况）
+
+- 远程：`https://github.com/Snakepot/ygotool.git`（`git remote -v` 确认；未配置则 `git remote add origin <url>`）。
+- **本机 HTTPS 到 github.com 会被重置/超时（被墙）**，push 走 **SSH over 443**：
+  ```bash
+  git push ssh://git@ssh.github.com:443/Snakepot/ygotool.git main
+  git push ssh://git@ssh.github.com:443/Snakepot/ygotool.git --tags
+  ```
+- SSH key：`C:\Users\Eric\.ssh\id_ed25519`（权限已收紧为仅本人 FullControl；`known_hosts` 首次连接自动写入）。
+- **注意**：git 推标签/推送会经 Git-for-Windows 的 `sh.exe` 启动 ssh，受限沙箱会禁止它建管道（`couldn't create signal pipe`）——推送需要在完整访问模式（或普通终端）里跑，别在受限环境里反复重试。
+- 远程当前状态：`main` 领先本地 4 个提交（P0/P1/C23 修复，未发版）；`v0.1.0–v0.1.6` 标签待推。

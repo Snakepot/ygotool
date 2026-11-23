@@ -52,6 +52,7 @@ ygotool serve [--host 127.0.0.1] [--port 8000]                        # Web 界�
 | **Temperature** | `agent/llm.py` + `examples/03` | 温度扫描的多样性与 token 变化 |
 | **Token 控制** | `agent/budget.py` + `examples/04` | 预算扫描看检索被裁到几个 |
 | **工具降幻觉** | `agent/tools.py` + `agent/agent.py` | Agent 必先调工具拉真实数据再答 |
+| **评测闭环** | `eval/run.py` + `agent/data/cases.jsonl` | 7 判例 → LLM-as-judge 正确率 + must_cite 引用率 |
 | **微调数据导出**（预留） | `examples/` | AB 层是 C 层微调的"前一步"：数据构造→few-shot→评测链路在此可复现 |
 
 ### 运行示例（默认零依赖、离线可跑）
@@ -62,6 +63,7 @@ python examples/02_fewshot_vs_zeroshot.py   # few-shot 成本曲线
 python examples/03_temperature_sweep.py     # 温度扫描
 python examples/04_token_budget.py          # 预算扫描
 python examples/05_action_ontology.py       # 动作本体 / PSCT 解析对比
+python eval/run.py                          # 评测（真模型，费 token）：正确率/引用率 → eval/result.csv
 ```
 
 > 未配置 `LLM_API_KEY` 时自动用 `mock` 后端：能看 token 成本/趋势曲线，
