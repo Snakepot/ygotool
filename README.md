@@ -11,14 +11,15 @@
 
 - **本地工具**：全量卡池 MD5 增量同步、离线按名/密码/cid 查询、YGOPro 位运算字段解码、禁限卡表。
 - **RAG 层**：三种切分器（整卡/按效果①②/FAQ Q-A）、可切换 embedder（零依赖 TF-IDF / OpenAI 兼容 / 本地）、向量检索。
-- **Agent**：三任务（自然语言查卡 / 裁定问答 / 卡组构筑）、工具增强编排（降幻觉）、Token 预算管理。
+- **Agent**：三任务（自然语言查卡 / 裁定问答 / 卡组构筑）；真模型走 ReAct 多轮原生 tool-calling，
+  mock 走确定性管线兜底（零 Key 可跑）；11 个工具控制幻觉，Token 预算管理。
 
 ## 安装
 
 ```bash
 pip install -e .            # 基础（仅标准库即可运行阶段1/2）
 pip install -e ".[llm]"     # 加 OpenAI 兼容 LLM 客户端
-pip install -e ".[vec]"     # 加 sqlite-vec（规模化检索）
+pip install -e ".[web]"     # 加 FastAPI + uvicorn（Web 界面 SSE）
 pip install -e ".[embed]"   # 加本地 sentence-transformers
 ```
 
@@ -36,8 +37,10 @@ ygotool refresh                         # 同步本地卡池（MD5 增量）
 ygotool search 青眼                     # 按名称查卡（离线）
 ygotool card 89631139 [--faq]          # 按密码取详情 + 解码
 ygotool limits                          # 禁限卡表概览
-ygotool build-index [--chunker effect] [--n 500]   # 建 RAG 索引
-ygotool agent "问题" [--task ruling]    # 问答（trace 可见工具链与 token）
+ygotool build-index [--chunker effect] [--n 500] [--all] [--resume]   # 建 RAG 索引
+ygotool build-faq-index [--n 200] [--ids 89631139] [--all] [--resume] # 建 FAQ 跨卡索引（裁定主力）
+ygotool agent "问题" [--task ruling] [--k 8] [--few-shots 2]          # 问答（trace 可见工具链/预算/token）
+ygotool serve [--host 127.0.0.1] [--port 8000]                        # Web 界面（SSE 流式 + trace）
 ```
 
 ## 学习点导览
@@ -58,6 +61,7 @@ python examples/01_chunking_compare.py     # 切分对比
 python examples/02_fewshot_vs_zeroshot.py   # few-shot 成本曲线
 python examples/03_temperature_sweep.py     # 温度扫描
 python examples/04_token_budget.py          # 预算扫描
+python examples/05_action_ontology.py       # 动作本体 / PSCT 解析对比
 ```
 
 > 未配置 `LLM_API_KEY` 时自动用 `mock` 后端：能看 token 成本/趋势曲线，
@@ -70,6 +74,9 @@ config.py            配置（.env + 默认值）
 ygocdb/              数据层：client(HTTP) / codec(位运算解码) / store(sqlite缓存)
 rag/                 RAG：chunker / embedder / index / retriever
 agent/               LLM 客户端 / 提示词+few-shot / 工具 / 预算 / 编排
+web/                 FastAPI + SSE 流式问答界面（静态页在 web/static/）
+eval/                LLM-as-judge 评测（标注集 agent/data/cases.jsonl + 规范报告）
+docs/                技术路线 / HANDOFF / git 操作速查
 cli.py               命令行入口
 examples/            学习示例（每个隔离一个技术点）
 cache/               cards.zip / cards.db / idx_main.db（运行时产物）

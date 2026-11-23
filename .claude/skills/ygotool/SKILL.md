@@ -76,14 +76,14 @@ ygotool/
 - **新搜索维度**：参考 `search_by_effect`（PSCT 解析+同义词+主动/被动+全量两档）或 `search_by_series`（LCS 提取 token+name LIKE 全量）。
 
 ## 编码约定
-- **零依赖优先**：标准库能做就不引包；额外依赖放 `[extras]`（llm/web/vec/embed），mock 后端兜底让无 Key 也能跑。
+- **零依赖优先**：标准库能做就不引包；额外依赖放 `[extras]`（llm/web/embed），mock 后端兜底让无 Key 也能跑。
 - **对上层透明**：`Embedder`/`LLMClient` 暴露统一方法，换后端只改构造一行。
 - **trace 全程可见**：工具链/预算/token 用量都进 trace，可复盘。
 - **尊重数据源**：cards.zip 走 MD5 增量、FAQ 磁盘缓存、`YgocdbClient(min_interval=0.3)` 限流。
-- **渐进披露**：本 skill 精简，深度内容查 `README.md` 与 `docs/agent-concepts-review.md`（含概念地图、面试题、§13 数据结构化边界）。
+- **渐进披露**：本 skill 精简，深度内容查 `README.md` 与 `docs/技术路线.md`（技术路线 / 取舍记录）。
 - **裁定领域知识**（排查裁定答案对错时）：cost≠效果、取对象≠发动后挑选、触发字面性（丢弃≠送去墓地≠cost）、90X 后 PSCT 统一但"未统一≠裁定不同"（判措辞非日期）、原则+FAQ 双轨。原则原文在 `agent/prompts.py`。
 
 ## 边界
 - 只做 AB 层（推理参数 + 上下文工程），不做 C 层权重微调（用闭源 API）。
 - 动作/原因类细分（"因效果送入墓地"）无结构化字段，靠 FAQ+原则；身份类（种族/类型/星级）位掩码精确。
-- mock 后端不支持原生 tool-calling → 当前用确定性管线，接真模型可换 ReAct（trace 结构不变）。
+- mock 后端不支持原生 tool-calling → mock 走确定性管线兜底；真模型走 ReAct 多轮（trace 结构一致，同为 `to_event()`）。

@@ -10,10 +10,9 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = ["openai>=1.40"]        # OpenAI 兼容客户端（DeepSeek/Kimi/智谱GLM/本地vLLM 均可）
-vec = ["sqlite-vec>=0.1.6"]   # 向量存储；不可用时可回退 numpy
 embed = ["sentence-transformers>=3.0"]  # 本地 embedding 回退方案
 web = ["fastapi>=0.110", "uvicorn>=0.27"]  # Web 前端
-all = ["openai>=1.40", "sqlite-vec>=0.1.6", "sentence-transformers>=3.0", "fastapi>=0.110", "uvicorn>=0.27"]
+all = ["openai>=1.40", "sentence-transformers>=3.0", "fastapi>=0.110", "uvicorn>=0.27"]
 
 [project.scripts]
 ygotool = "cli:main"
