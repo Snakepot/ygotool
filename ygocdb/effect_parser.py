@@ -210,10 +210,14 @@ CLAUSE_SPLIT = CLAUSE_MARK
 _ANAPHORA = re.compile(r"那只|这只|那张|这张|该怪兽|该卡|这只怪兽|那只怪兽")
 # 否定/限制词：动作单元含这些词表示"不允许做"，不是该卡执行的动作
 _NEG_RE = re.compile(r"不能|无法|不可|不得|不可以|不用|无需|不需要|不进行|未进行")
-# 触发条件（发动条件）分句：PSCT 里 "…的场合"/"…时" 在「才能发动」之前，但不是 cost。
-# 例：森罗的守神「自己卡组的卡被效果送去墓地的场合，把这张卡1个超量素材取除才能发动」
-#     ——「…的场合」是触发条件，真正 cost 是「把…超量素材取除」。
-_TRIGGER_RE = re.compile(r"(的)?(場合|场合|时|時|とき)([,，]?)$")
+# 触发条件（发动条件）分句：PSCT 里 "…的场合"/"…时"/"…的时候"/"…之际"（可带「发动」/「才能发动」）
+# 是条件，不是 cost / 效果处理。例：
+#   森罗的守神「自己卡组的卡被效果送去墓地的场合，把这张卡1个超量素材取除才能发动」→ 场合=条件，取除=cost
+#   缚神冢「场上的这张卡被效果破坏送去墓地时才能发动」→ 时=条件
+#   缚神冢②「…的场合发动」→ 无「才能」的触发效果，场合=条件
+_TRIGGER_RE = re.compile(r"(的)?(場合|场合|时|時|とき|时候|之际|情况下)([,，]?)(才能发动|发动)?$")
+# cost 段里"祈使动作"句首（用于区分真 cost 与被动条件句）
+_COST_LEAD_RE = re.compile(r"^(把|将|从|以|解放|献祭|丢弃|舍弃|支付|作为cost)")
 
 
 def tag_action_units(desc: str | None, pdesc: str | None = None
@@ -268,12 +272,21 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                         acts = [a for a in acts if a == "cannot_activate"]
                         if not acts:
                             continue
-                    # 触发条件分句（…的场合 / …时）不是 cost：单独标 reason=trigger，
-                    # 避免「从卡组送墓的 cost」查询把「…被效果送去墓地的场合才能发动」这类
-                    # 发动条件当成 cost。真 cost（如「把…超量素材取除」）仍标 cost。
+                    # 触发条件分句：OCG 文本里「场合/場合」是条件句标记（不限于句尾，如
+                    # 「把…解放的场合可以特殊召唤」这种特殊召唤条件），「…时/…之际/…的时候」
+                    # 收尾也是条件。所有分句都做判定（无「才能发动」的句式同样适用）。
+                    # cost 段再区分祈使句（真 cost：「把…丢弃」）与被动条件句（「…被…破坏」= 条件的一部分）。
                     unit_reason = reason
-                    if reason == "cost" and _TRIGGER_RE.search(unit):
+                    if (_TRIGGER_RE.search(unit) or "场合" in unit or "場合" in unit
+                            or "时候" in unit or "之际" in unit):
                         unit_reason = "trigger"
+                    elif reason == "cost":
+                        if _COST_LEAD_RE.match(unit) or "作为cost" in unit:
+                            unit_reason = "cost"
+                        elif "被" in unit:
+                            unit_reason = "trigger"
+                        else:
+                            unit_reason = "cost"
                     src = extract_object_source(clean) or extract_source(clean)
                     tgts = extract_targets(clean)
                     # 来源区集合：动词之前的片段；动词在句首时，解放/丢弃类取动词后的区域词
