@@ -1,6 +1,6 @@
 ---
 name: ygotool
-description: 在 ygotool 项目（E:\emergency\正经工作\ygotool，基于 ygocdb API 的游戏王卡牌 Agent + 本地工具）上做开发、运维、调试、扩展时使用。涵盖架构导航、启停操作、踩坑速查、扩展模式、编码约定。当用户在这个项目里改代码、跑服务、查 bug、加功能、调参时触发。
+description: 在 ygotool 项目（基于 ygocdb API 的游戏王卡牌 Agent + 本地工具）上做开发、运维、调试、扩展时使用。涵盖架构导航、启停操作、踩坑速查、扩展模式、编码约定。当用户在这个项目里改代码、跑服务、查 bug、加功能、调参时触发。
 ---
 
 # ygotool 工作手册（给工作端 agent）

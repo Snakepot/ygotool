@@ -78,7 +78,7 @@ rag/                 RAG：chunker / embedder / index / retriever
 agent/               LLM 客户端 / 提示词+few-shot / 工具 / 预算 / 编排
 web/                 FastAPI + SSE 流式问答界面（静态页在 web/static/）
 eval/                LLM-as-judge 评测（标注集 agent/data/cases.jsonl + 规范报告）
-docs/                技术路线 / HANDOFF / git 操作速查
+docs/                技术路线 / git 操作速查
 cli.py               命令行入口
 examples/            学习示例（每个隔离一个技术点）
 cache/               cards.zip / cards.db / idx_main.db（运行时产物）
