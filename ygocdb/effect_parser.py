@@ -210,6 +210,10 @@ CLAUSE_SPLIT = CLAUSE_MARK
 _ANAPHORA = re.compile(r"那只|这只|那张|这张|该怪兽|该卡|这只怪兽|那只怪兽")
 # 否定/限制词：动作单元含这些词表示"不允许做"，不是该卡执行的动作
 _NEG_RE = re.compile(r"不能|无法|不可|不得|不可以|不用|无需|不需要|不进行|未进行")
+# 触发条件（发动条件）分句：PSCT 里 "…的场合"/"…时" 在「才能发动」之前，但不是 cost。
+# 例：森罗的守神「自己卡组的卡被效果送去墓地的场合，把这张卡1个超量素材取除才能发动」
+#     ——「…的场合」是触发条件，真正 cost 是「把…超量素材取除」。
+_TRIGGER_RE = re.compile(r"(的)?(場合|场合|时|時|とき)([,，]?)$")
 
 
 def tag_action_units(desc: str | None, pdesc: str | None = None
@@ -264,6 +268,12 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                         acts = [a for a in acts if a == "cannot_activate"]
                         if not acts:
                             continue
+                    # 触发条件分句（…的场合 / …时）不是 cost：单独标 reason=trigger，
+                    # 避免「从卡组送墓的 cost」查询把「…被效果送去墓地的场合才能发动」这类
+                    # 发动条件当成 cost。真 cost（如「把…超量素材取除」）仍标 cost。
+                    unit_reason = reason
+                    if reason == "cost" and _TRIGGER_RE.search(unit):
+                        unit_reason = "trigger"
                     src = extract_object_source(clean) or extract_source(clean)
                     tgts = extract_targets(clean)
                     # 来源区集合：动词之前的片段；动词在句首时，解放/丢弃类取动词后的区域词
@@ -290,7 +300,7 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                             "action": key, "label": a.label,
                             "source": src or a.source,
                             "zones": sorted(zones),
-                            "reason": "uncertain" if not structured else reason,
+                            "reason": "uncertain" if not structured else unit_reason,
                             "clause_idx": idx, "section": sec_name,
                             # 片段=整段动作单元原文（含「那只怪兽以外」这类限定语），
                             # 供 LLM 照抄，避免被截断后自拟条件
