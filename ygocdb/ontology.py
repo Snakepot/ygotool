@@ -50,7 +50,7 @@ ACTIONS: list[Action] = [
     Action("release", "解放/献祭", [r"解放", r"献祭"], source=""),
     Action("banish", "除外", [r"除外", r"除[外去]"], source=""),
     Action("draw", "抽卡", [r"抽[^\n。]{0,2}卡"], source="deck"),
-    Action("special_summon", "特殊召唤", [r"特殊召唤", r"特召"], source=""),
+    Action("special_summon", "召唤/特殊召唤", [r"召唤", r"特召"], source=""),
     Action("add_to_hand", "加入手卡/检索",
            [r"加入手[卡札]", r"加入手牌", r"从卡组.{0,6}加入手"], source="deck"),
     Action("leaves_field_by_opponent", "因对方效果离开场上",
@@ -62,6 +62,10 @@ ACTIONS: list[Action] = [
     Action("cannot_activate", "不能把效果发动",
            [r"不能把[^。]{0,8}效果发动", r"不能[^。]{0,10}效果发动",
             r"不能把[^。]{0,8}发动", r"不能发动", r"不可发动"], source=""),
+    # 以下四个用于"触发条件/时点"类检索（攻击宣言、召唤·特殊召唤、翻开、盖放）
+    Action("attack_declare", "攻击宣言", [r"攻击宣言"], source=""),
+    Action("reveal", "翻开/公开", [r"翻开", r"公开"], source=""),
+    Action("set", "盖放/覆盖", [r"盖放", r"覆盖"], source=""),
 ]
 
 # 预编译
@@ -254,8 +258,14 @@ def map_phrase_to_actions(phrase: str) -> list[str]:
         hits.append("draw")
     if "加入手卡" in p or "加入手牌" in p or "检索" in p:
         hits.append("add_to_hand")
-    if "特殊召唤" in p or "特召" in p:
+    if "召唤" in p or "特召" in p:
         hits.append("special_summon")
+    if "攻击宣言" in p:
+        hits.append("attack_declare")
+    if "翻开" in p or "公开" in p:
+        hits.append("reveal")
+    if "盖放" in p or "覆盖" in p:
+        hits.append("set")
     if "丢弃" in p and not hits:
         hits.append("discard_hand")
     if "墓地" in p and not hits:

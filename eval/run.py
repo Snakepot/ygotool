@@ -102,6 +102,9 @@ def main():
             answer, trace = agent.ask(q, task=c.get("task", "ruling"),
                                        num_few_shots=0, k=8,
                                        max_context=SETTINGS.default_max_context_tokens,
+                                       # 评测固定 temperature=0：压采样波动，数字可复现
+                                       # （被测答案与 judge 都确定性；默认 0.2 会引入方差）
+                                       temperature=0.0,
                                        persona="strict")
         except Exception as e:
             answer, trace = f"(执行异常: {e})", None

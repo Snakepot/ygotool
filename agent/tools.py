@@ -136,6 +136,19 @@ def _matched_sentence(text: str, terms, maxlen: int = 120) -> str:
     return (text or "").strip()[:maxlen]
 
 
+def _labeled_snippet(c: dict) -> str:
+    """命中片段前缀段位标签：让 LLM 不必猜 cost/effect/trigger 边界。
+
+    段位是 `tag_action_units` 按「才能发动」切好的（cost 在其前、effect 在其后、
+    trigger 是…的场合/…时收尾的条件句）；直接交给模型采信，避免它把基路伯③那种
+    「从卡组把1只3星怪兽送去墓地，以…为对象才能发动」的 cost 误读成效果段。
+    """
+    lab = {"cost": "[cost]", "effect": "[effect]", "trigger": "[trigger]",
+           "uncertain": "[旧措辞]", "opponent": "[对方]"}.get(c.get("reason") or "")
+    sn = (c.get("snippet") or "").strip()
+    return (lab + " " + sn).strip() if sn else sn
+
+
 _LEVEL_RE = re.compile(r"(\d+)星")
 _ATTR_RE = re.compile(r"(光|暗|地|水|炎|风|神)属性")
 _RACE_RE = re.compile(r"(兽战士|魔法师|鸟兽|爬虫类|念动力|幻神兽|创造神|电子界|幻想魔|海龙|战士|天使|恶魔|不死|机械|水生|岩石|植物|昆虫|雷|龙|兽|恐龙|鱼)族")
@@ -670,6 +683,9 @@ class ToolRuntime:
         zone_text = "、".join(zone_label.get(z, z) for z in sorted(qz))
         total = len(modern) + len(uncertain)
         lines = [f"{hdr} 共匹配 {total} 张（现代{len(modern)}+未确认{len(uncertain)}）。"]
+        if name == "search_by_action":
+            lines.append("（片段前缀：【cost】=发动代价（「才能发动」之前）、【effect】=效果处理、"
+                         "【trigger】=发动/触发条件——工具已按「才能发动」切好，直接采信，不要反推）")
 
         def tier(c: dict) -> int:
             return c.get("tier", 2 if c.get("specific") else 0)
@@ -691,7 +707,7 @@ class ToolRuntime:
                 else:
                     lines.append(f"★ 来源一致（来源限定为「{zone_text}」）：")
                 for c in spec[:SPEC_SAMPLE]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
             else:
                 lines.append("（本批结果里没有来源/限定条件一致的卡）")
             if near:
@@ -700,13 +716,13 @@ class ToolRuntime:
                 else:
                     lines.append(f"◆ 来源更宽（包含「{zone_text}」，可同时从多个区域选取）：")
                 for c in near[:NEAR_SAMPLE]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
             if gen_m or gen_u:
                 lines.append("【通用（未限定该条件，可自由选择对象/目标）】:")
                 for c in gen_m[:gen_n]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
                 for c in gen_u[:gen_n]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
             shown = (len(spec[:SPEC_SAMPLE]) + len(near[:NEAR_SAMPLE])
                      + len(gen_m[:gen_n]) + len(gen_u[:gen_n]))
             if total > shown:
@@ -716,11 +732,11 @@ class ToolRuntime:
             if modern:
                 lines.append("【现代】:")
                 for c in modern[:SAMPLE]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
             if uncertain:
                 lines.append("【未确认(90X前旧措辞,须查FAQ)】:")
                 for c in uncertain[:SAMPLE]:
-                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {c.get('snippet','')}".rstrip())
+                    lines.append(f"- {c['cn_name']}(#{c['id']}) {c['types']} | {_labeled_snippet(c)}".rstrip())
             if total > SAMPLE:
                 lines.append(f"（其余 {total - SAMPLE} 张见左栏完整名单）")
         return "\n".join(lines)
@@ -769,7 +785,7 @@ TOOLS = [
                        "required": ["card_id"]}}},
     {"type": "function", "function": {
         "name": "search_by_action",
-        "description": "按裁定动作全量找卡（用户问'有哪些/列出 cost包含X 的卡'，X是动作如 舍弃手卡/从卡组送去墓地/破坏/除外/解放/因对方离开场上）。"
+        "description": "按裁定动作全量找卡（用户问'有哪些/列出 cost包含X 的卡'，X是动作如 舍弃手卡/从卡组送去墓地/破坏/除外/解放/因对方离开场上/效果无效化/不能把效果发动/攻击宣言/召唤·特殊召唤/翻开/盖放）。返回名单带【cost】【effect】【trigger】段位前缀（工具按「才能发动」切分），直接采信。"
                         "动作短语不必与原文逐字一致：'解放手卡怪兽' 与 '把自己的手卡·场上1只怪兽解放才能发动' 都归为动作 解放。"
         "**必须把用户全部限定词写进 phrase**（例：从卡组将等级3怪兽送入墓地 → phrase=从卡组把3星怪兽送去墓地），省略限定词会只得到通用卡；若返回里没有「★明确限定」分组，说明 phrase 漏了限定词，补上再查。"
                         "可按 reason 过滤：cost=只查作为发动代价的（原文'才能发动'之前）；effect=只查效果处理时的；不传 reason 时 cost 与效果段都搜（找「cost 包含X」的卡用它）。"
