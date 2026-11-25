@@ -118,6 +118,24 @@ def _zone_in_unit(word: str, text: str) -> bool:
     return word in text
 
 
+def _matched_sentence(text: str, terms, maxlen: int = 120) -> str:
+    """命中关键词所在的**完整分句原文**（按 。！？； 切），供 LLM 照抄当"来源/方式"依据。
+
+    按"命中词权重 = 词长之和"选分句（长词优先），避免只挑到包含常见双字（如"效果"）
+    的无关分句。没有片段可抄时 LLM 只能自拟概述，会编出原文没有的限定语——所以
+    兜底检索也必须给原文片段。
+    """
+    sents = [s.strip() for s in re.split(r"(?<=[。！？；])", text or "") if s.strip()]
+    best, best_score = "", 0
+    for s in sents:
+        score = sum(len(t) for t in terms if t in s)
+        if score > best_score:
+            best, best_score = s, score
+    if best:
+        return best[:maxlen]
+    return (text or "").strip()[:maxlen]
+
+
 _LEVEL_RE = re.compile(r"(\d+)星")
 _ATTR_RE = re.compile(r"(光|暗|地|水|炎|风|神)属性")
 _RACE_RE = re.compile(r"(兽战士|魔法师|鸟兽|爬虫类|念动力|幻神兽|创造神|电子界|幻想魔|海龙|战士|天使|恶魔|不死|机械|水生|岩石|植物|昆虫|雷|龙|兽|恐龙|鱼)族")
@@ -442,10 +460,13 @@ class ToolRuntime:
             desc = r["desc"] or ""
             pdesc = r["pdesc"] or ""
             bodies = effect_bodies(desc) + effect_bodies(pdesc)
-            if not any(_has_active(b, action_terms) for b in bodies):
+            hit_body = next((b for b in bodies if _has_active(b, action_terms)), None)
+            if hit_body is None:
                 continue
             entry = {"id": r["id"], "cn_name": r["cn_name"],
-                     "types": ((r["types"] or "").splitlines() or [""])[0]}
+                     "types": ((r["types"] or "").splitlines() or [""])[0],
+                     # 兜底路径也给命中分句原文，避免 LLM 无依据自拟条件
+                     "snippet": _matched_sentence(hit_body, action_terms)}
             if is_structured(desc) or is_structured(pdesc):
                 modern.append(entry)
             else:

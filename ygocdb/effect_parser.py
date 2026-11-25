@@ -176,9 +176,12 @@ def parse_action_units(desc: str | None, pdesc: str | None = None,
                 acts = match_actions(seg)
                 if not acts:
                     continue
-                # 跳过否定/限制句（不能/无法/不可…）——这是"不允许做某事"，不是该卡执行的动作
-                if re.search(r"不能|无法|不可|不得|不可以|无法", seg):
-                    continue
+                # 否定/限制句（不能/无法/不可…）——这是"不允许做某事"，不是该卡执行的动作；
+                # 只保留 cannot_activate（「不能把效果发动」本身是目标动作），其余动作丢弃
+                if re.search(r"不能|无法|不可|不得|不可以", seg):
+                    acts = [a for a in acts if a == "cannot_activate"]
+                    if not acts:
+                        continue
                 src = extract_source(seg) or extract_object_source(seg)
                 tgts = extract_targets(seg)
                 # 代词句继承同 clause 的 target/source（动作在下一句、目标在取对象句）
@@ -191,7 +194,8 @@ def parse_action_units(desc: str | None, pdesc: str | None = None,
                     "actions": acts,
                     "source": src,
                     "targets": tgts,
-                    "snippet": seg[:50].replace("\n", " "),
+                    # 整段单元原文（含限定语），避免截断后丢条件
+                    "snippet": seg[:120].replace("\n", " "),
                     "clause_idx": idx,
                     "section": sec_name,
                     "reason": "uncertain" if not structured else "effect",
@@ -245,7 +249,7 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                     continue
                 for unit in split_action_segments(seg):
                     unit = unit.strip()
-                    if not unit or _NEG_RE.search(unit):
+                    if not unit:
                         continue
                     # 先剔「从X特殊召唤的…」修饰语再识别动作/来源：
                     # 否则动词位置被修饰语里的「特殊召唤」截断，来源区错取成「从额外卡组」
@@ -253,6 +257,13 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                     acts = match_actions(clean)
                     if not acts:
                         continue
+                    # 否定/限制句（不能/无法/不用…＝"不允许做"，不是该卡执行的动作）：
+                    # 只保留 cannot_activate（「不能把效果发动」本身是目标动作）；
+                    # 其余动作（如「对方若不从卡组送去墓地则不能把魔法卡发动」里的送墓）是自肃/条件，丢弃
+                    if _NEG_RE.search(unit):
+                        acts = [a for a in acts if a == "cannot_activate"]
+                        if not acts:
+                            continue
                     src = extract_object_source(clean) or extract_source(clean)
                     tgts = extract_targets(clean)
                     # 来源区集合：动词之前的片段；动词在句首时，解放/丢弃类取动词后的区域词
@@ -281,7 +292,9 @@ def tag_action_units(desc: str | None, pdesc: str | None = None
                             "zones": sorted(zones),
                             "reason": "uncertain" if not structured else reason,
                             "clause_idx": idx, "section": sec_name,
-                            "snippet": unit[:60].replace("\n", " "),
+                            # 片段=整段动作单元原文（含「那只怪兽以外」这类限定语），
+                            # 供 LLM 照抄，避免被截断后自拟条件
+                            "snippet": unit[:120].replace("\n", " "),
                             "clause": unit[:120].replace("\n", " "),
                             "targets": tgts,
                         })

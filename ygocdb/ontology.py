@@ -57,6 +57,11 @@ ACTIONS: list[Action] = [
            [r"对方[^。]{0,20}(离开|离|从)场上", r"因对方[^。]{0,20}场上",
             r"对方[^。]{0,20}(让|使|把).{0,6}(离开|离)场"],
            source="field", reason_default="opponent"),
+    Action("negate_effect", "效果无效化",
+           [r"效果无效化", r"效果无效", r"无效化"], source=""),
+    Action("cannot_activate", "不能把效果发动",
+           [r"不能把[^。]{0,8}效果发动", r"不能[^。]{0,10}效果发动",
+            r"不能把[^。]{0,8}发动", r"不能发动", r"不可发动"], source=""),
 ]
 
 # 预编译
@@ -102,6 +107,8 @@ def first_action_pos(text: str) -> int | None:
 
 
 # 用于"来源区"的动词词表（动作词本身，而非含来源的整条正则）
+# 注：不要加「无效/无效化」——它在「效果无效从卡组特殊召唤」里是形容词，会把
+# first_verb_pos 截在它上面，导致「从卡组」落在动词前片段之外而丢失来源区。
 VERB_WORDS = ["解放", "献祭", "丢弃", "舍弃", "送去墓地", "送入墓地", "送进墓地",
               "送去", "送入", "送进", "加入手卡", "加入手牌", "特殊召唤", "特召",
               "除外", "破坏", "抽卡", "抽"]
@@ -231,8 +238,12 @@ def map_phrase_to_actions(phrase: str) -> list[str]:
         hits.append("send_hand_to_gy")
     if "场上" in p and "墓地" in p and "手" not in p and "卡组" not in p:
         hits.append("send_field_to_gy")
-    if "对方" in p and ("离开" in p or "场上" in p):
+    if "对方" in p and ("离开" in p or "离场" in p):
         hits.append("leaves_field_by_opponent")
+    if "无效" in p:
+        hits.append("negate_effect")
+    if "不能" in p and "发动" in p:
+        hits.append("cannot_activate")
     if "破坏" in p:
         hits.append("destroy")
     if "解放" in p or "献祭" in p or "祭品" in p:
