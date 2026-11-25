@@ -77,8 +77,9 @@ async function showCard(id) {
     const r = await fetch(`/api/card/${id}?faq=1`);
     if (!r.ok) { alert("未找到该卡"); return; }
     const c = await r.json();
-    let h = `<h3>${esc(c.cn_name)} <span class="sub">#${c.id}</span></h3>`;
-    h += `<div class="types">${esc(c.types)}</div>`;
+    const first = (c.cn_name || "?").trim().charAt(0) || "?";
+    let h = `<div class="modal-head"><span class="thumb modal-thumb">${esc(first)}</span>`
+      + `<div><h3>${esc(c.cn_name)}</h3><div class="types">#${esc(String(c.id))} · ${esc(c.types)}</div></div></div>`;
     if (c.pdesc) h += `<h3>灵摆效果</h3><pre>${esc(c.pdesc)}</pre>`;
     if (c.desc) h += `<h3>效果</h3><pre>${esc(c.desc)}</pre>`;
     if (c.faqcount) {
@@ -95,37 +96,56 @@ document.querySelector(".modal-backdrop").onclick = () => $("card-modal").hidden
 function renderCardItem(container, c) {
   const d = document.createElement("div");
   d.className = "card-item";
-  d.innerHTML = `<span class="name">${esc(c.cn_name)}</span><span class="sub">#${c.id} ${esc(c.types || "")}</span>`;
+  const first = (c.cn_name || "?").trim().charAt(0) || "?";
+  d.innerHTML = `<span class="thumb">${esc(first)}</span>`
+    + `<span class="card-main"><span class="name">${esc(c.cn_name)}</span>`
+    + `<span class="sub">#${esc(String(c.id))} ${esc(c.types || "")}</span>`
+    + (c.snippet ? `<span class="snippet">${esc(c.snippet)}</span>` : "")
+    + `</span>`;
   d.onclick = () => showCard(c.id);
   container.appendChild(d);
 }
+// 加载骨架 / 空态（纯前端占位，不依赖后端）
+function showSkeleton(el, rows = 6) {
+  el.innerHTML = "";
+  for (let i = 0; i < rows; i++) {
+    const d = document.createElement("div");
+    d.className = "skeleton";
+    el.appendChild(d);
+  }
+}
+function emptyState(el, text) {
+  el.innerHTML = `<div class="empty"><span class="empty-icon">🔍</span><span>${esc(text)}</span></div>`;
+}
 async function doSearch() {
   const q = $("search-input").value.trim(); if (!q) return;
+  const el = $("card-list"); showSkeleton(el, 5);
   const d = await (await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=30`)).json();
-  const el = $("card-list"); el.innerHTML = "";
+  el.innerHTML = "";
   d.result.forEach(c => renderCardItem(el, c));
-  if (!d.result.length) el.innerHTML = "<div class='sub'>无匹配</div>";
+  if (!d.result.length) emptyState(el, "没有匹配的卡牌，试试别的关键词");
 }
 async function doEffectSearch() {
   const q = $("effect-input").value.trim(); if (!q) return;
+  const el = $("effect-list"); showSkeleton(el, 5);
   const reason = $("effect-reason").value;
   const url = `/api/action-search?q=${encodeURIComponent(q)}` + (reason ? `&reason=${reason}` : "");
   const d = await (await fetch(url)).json();
-  const el = $("effect-list"); el.innerHTML = "";
+  el.innerHTML = "";
   const mode = d.mode === "effect" ? "子串回退" : (reason ? `仅${reason}段` : "本体");
-  const tier = (title, cards, note) => {
+  const tier = (title, cards) => {
     if (!cards.length) return;
     const h = document.createElement("div"); h.className = "sub";
-    h.innerHTML = `<b>${esc(title)}（${cards.length}）</b>${note ? " " + esc(note) : ""}`;
+    h.innerHTML = `<b>${esc(title)}（${cards.length}）</b>`;
     el.appendChild(h); cards.forEach(c => renderCardItem(el, c));
   };
   const tOf = (c) => c.tier !== undefined ? c.tier : (c.specific ? 2 : 0);
   const all = d.modern.concat(d.uncertain);
-  tier(`★ 精确匹配（${mode}）`, all.filter(c => tOf(c) === 2), "");
-  tier("◆ 次精确（限定一致，来源更宽）", all.filter(c => tOf(c) === 1), "");
-  tier("通用 · 现代", d.modern.filter(c => tOf(c) === 0), "");
-  tier("通用 · 未确认（90X 前旧措辞，须查FAQ）", d.uncertain.filter(c => tOf(c) === 0), "");
-  if (!d.count) el.innerHTML = "<div class='sub'>无匹配</div>";
+  tier(`★ 精确匹配（${mode}）`, all.filter(c => tOf(c) === 2));
+  tier("◆ 次精确（限定一致，来源更宽）", all.filter(c => tOf(c) === 1));
+  tier("通用 · 现代", d.modern.filter(c => tOf(c) === 0));
+  tier("通用 · 未确认（90X 前旧措辞，须查FAQ）", d.uncertain.filter(c => tOf(c) === 0));
+  if (!d.count) emptyState(el, "没有匹配的卡牌，试试换一种说法或补上限定词");
 }
 $("search-btn").onclick = doSearch;
 $("effect-btn").onclick = doEffectSearch;
@@ -137,9 +157,10 @@ $("effect-input").addEventListener("keydown", e => { if (e.key === "Enter") doEf
 // 按系列搜（卡名全量）
 async function doSeriesSearch() {
   const q = $("series-input").value.trim(); if (!q) return;
+  const el = $("series-list"); showSkeleton(el, 4);
   const d = await (await fetch(`/api/series-search?q=${encodeURIComponent(q)}`)).json();
-  const el = $("series-list"); el.innerHTML = "";
-  if (!d.count) { el.innerHTML = `<div class='sub'>未识别系列（token: ${esc(d.token||"无")}）</div>`; return; }
+  el.innerHTML = "";
+  if (!d.count) { emptyState(el, `未识别系列（token: ${d.token || "无"}）`); return; }
   const h = document.createElement("div"); h.className = "sub";
   h.innerHTML = `<b>系列「${esc(d.token)}」（${d.count}）</b>`;
   el.appendChild(h);

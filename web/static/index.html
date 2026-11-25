@@ -8,20 +8,27 @@
 </head>
 <body>
 <div class="topbar">
-  <span class="brand">ygotool</span>
-  <button id="theme-btn" class="icon-btn" title="深色/浅色">🌙</button>
+  <div class="brand-block">
+    <span class="brand-mark">Y</span>
+    <span class="brand">ygotool</span>
+    <span class="brand-sub">卡牌查询 · 裁定问答 Agent</span>
+  </div>
+  <div class="topbar-right">
+    <button id="theme-btn" class="icon-btn" title="深色/浅色">🌙</button>
+  </div>
 </div>
 <div class="layout" id="layout">
   <!-- 左：卡牌浏览 -->
   <section class="panel" id="browse">
     <h2>卡牌浏览</h2>
+    <div class="sec-title">按卡名</div>
     <div class="search-row">
       <input id="search-input" placeholder="按卡名搜索…" autocomplete="off">
       <button id="search-btn">搜</button>
       <button id="search-clear" class="ghost-btn">清空</button>
     </div>
     <div id="card-list" class="card-grid"></div>
-    <hr>
+    <div class="sec-title">按效果 / 动作</div>
     <div class="search-row">
       <input id="effect-input" placeholder='按效果/动作搜（如 舍弃手卡、从卡组送去墓地、破坏）' autocomplete="off">
       <select id="effect-reason" title="按 cost/效果 过滤（仅动作命中时生效）">
@@ -33,7 +40,7 @@
       <button id="effect-clear" class="ghost-btn">清空</button>
     </div>
     <div id="effect-list" class="card-grid"></div>
-    <hr>
+    <div class="sec-title">按系列</div>
     <div class="search-row">
       <input id="series-input" placeholder='按系列搜（如 具象天使）' autocomplete="off">
       <button id="series-btn">按系列</button>
@@ -73,6 +80,7 @@
       <h2>参数</h2>
       <button id="collapse-btn" class="ghost-btn" title="折叠/展开">›</button>
     </div>
+    <div class="sec-title">推理参数</div>
     <div class="param"><label>温度 <span id="v-temp"></span>
       <input id="p-temp" type="range" min="0" max="1" step="0.1" value="0.2"></div>
     <div class="param"><label>max_tokens <span id="v-mt"></span>
@@ -82,10 +90,10 @@
     <div class="param"><label>max_context <span id="v-mc"></span>
       <input id="p-mc" type="number" min="256" max="32000" step="256" value="16000"></div>
     <div class="param"><label><input id="p-thinking" type="checkbox" checked> 思考</label></div>
-    <hr>
-    <div class="param"><label>模型 <span id="v-model" class="muted"></span></div>
-    <div class="param"><label>后端 <span id="backend-tag" class="tag"></span></div>
-    <div class="param"><label>索引 <span id="v-index" class="muted"></span></div>
+    <div class="sec-title">环境</div>
+    <div class="param"><label>模型 <span id="v-model" class="muted"></span></label></div>
+    <div class="param"><label>后端 <span id="backend-tag" class="tag"></span></label></div>
+    <div class="param"><label>索引 <span id="v-index" class="muted"></span></label></div>
   </aside>
 </div>
 
