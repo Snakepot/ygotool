@@ -207,6 +207,28 @@ class ToolRuntime:
         self.settings = settings
         self._lim_cache: dict | None = None
         self._rel_map: dict | None = None
+        self._id2cid: dict | None = None
+
+    def _cid_of(self, card_id) -> int | None:
+        """密码 id → cid（禁限表用的是 cid，不是密码 id；见踩坑 #34）。"""
+        try:
+            card_id = int(card_id)
+        except (TypeError, ValueError):
+            return None
+        if self._id2cid is None:
+            db = self.store.connect()
+            self._id2cid = {}
+            try:
+                for r in db.execute("SELECT id, cid FROM cards"):
+                    if r["id"] is None or r["cid"] is None:
+                        continue
+                    try:
+                        self._id2cid[int(r["id"])] = int(r["cid"])
+                    except (TypeError, ValueError):
+                        continue
+            finally:
+                db.close()
+        return self._id2cid.get(card_id)
 
     # ---- 工具实现 ----
     def search_card(self, query: str, limit: int = 5) -> tuple[str, list[dict]]:
@@ -247,26 +269,40 @@ class ToolRuntime:
         parts = []
         for lang in ("cn", "ja", "en"):
             d = lim.get(lang, {})
-            parts.append(f"{lang}: 禁{len(d.get('forbidden', d.get('banned', [])))} "
-                         f"限{len(d.get('limited', []))} 准限{len(d.get('semiLimited', []))}")
+            parts.append(f"{lang}: 禁{len(d.get('forbidden') or set())} "
+                         f"限{len(d.get('limited') or set())} "
+                         f"准限{len(d.get('semi_limited') or set())}")
         return "禁限卡表概览 → " + " | ".join(parts), lim
 
     def _limits(self) -> dict:
-        """禁限卡表（带运行期缓存，避免反复请求）。"""
+        """禁限卡表（带运行期缓存）。已由 client.get_limits 归一成 int 集合。"""
         if self._lim_cache is None:
             self._lim_cache = self.store.client.get_limits()
         return self._lim_cache
 
     def limit_status(self, card_id: int, lang: str = "cn") -> str:
-        """查某卡在指定语种的禁限状态：禁卡/限制/准限制/无限制。"""
+        """查某卡在指定语种的禁限状态：禁卡/限制/准限制/无限制。
+
+        card_id 是**密码 id**（工具 schema 约定）；禁限表存的是 cid，
+        先用本地 cards 表映射 id→cid 再比对（踩坑 #34）。
+        """
         d = self._limits().get(lang, {})
-        id_ = int(card_id)
-        forbidden = d.get("forbidden", d.get("banned", [])) or []
-        if id_ in forbidden:
+        cid = self._cid_of(card_id)
+        try:
+            raw = int(card_id)
+        except (TypeError, ValueError):
+            raw = None
+        if cid is None:
+            # 容错：调用方可能直接传了 cid
+            cid = raw
+            if cid is None:
+                return "编号无效"
+        forbidden = d.get("forbidden") or set()
+        if cid in forbidden:
             return "禁卡"
-        if id_ in (d.get("limited") or []):
+        if cid in (d.get("limited") or set()):
             return "限制"
-        if id_ in (d.get("semiLimited") or []):
+        if cid in (d.get("semi_limited") or set()):
             return "准限制"
         return "无限制"
 

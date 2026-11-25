@@ -105,8 +105,36 @@ class YgocdbClient:
         return self._post_json("/api/v0/cardset", body)
 
     def get_limits(self, show_all: bool = False) -> dict:
+        """禁限卡表。返回 {lang: {date, forbidden/limited/semi_limited: set[int]}}。
+
+        归一化（踩坑 #34）：ygocdb limits.json 里
+          - 列表元素是**字符串**编号，且是 **cid**（内部编号），不是密码 id；
+          - 准限键名是 `semi_limited`（不是 `semiLimited`）。
+        这里统一成 int 集合；cid→密码 id 的映射由调用方（ToolRuntime）用本地 cards 表处理。
+        """
         params = {"show": "all"} if show_all else None
-        return self._get("/api/v0/limits.json", params)
+        raw = self._get("/api/v0/limits.json", params) or {}
+        out: dict = {}
+        for lang, d in raw.items():
+            d = d or {}
+
+            def _ids(*keys) -> set:
+                ids: set = set()
+                for k in keys:
+                    for x in (d.get(k) or []):
+                        try:
+                            ids.add(int(x))
+                        except (TypeError, ValueError):
+                            pass
+                return ids
+
+            out[lang] = {
+                "date": d.get("date"),
+                "forbidden": _ids("forbidden", "banned"),
+                "limited": _ids("limited"),
+                "semi_limited": _ids("semi_limited", "semiLimited"),
+            }
+        return out
 
     def get_release_dates(self) -> list:
         return self._get("/api/v0/releaseDates.json")

@@ -86,8 +86,9 @@ def cmd_limits(args, settings):
     lim = s.client.get_limits()
     for lang in ("cn", "ja", "en"):
         d = lim.get(lang, {})
-        print(f"{lang}: 禁{len(d.get('forbidden', d.get('banned', [])))} "
-              f"限{len(d.get('limited', []))} 准限{len(d.get('semiLimited', []))}")
+        print(f"{lang}: 禁{len(d.get('forbidden') or set())} "
+              f"限{len(d.get('limited') or set())} "
+              f"准限{len(d.get('semi_limited') or set())}")
     s.close()
 
 
