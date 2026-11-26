@@ -26,6 +26,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 # ---- 单例（进程级）----
 settings = get_settings()
 store = CardStore(cache_dir=settings.cache_dir, base=settings.ygocdb_base)
+# 禁限表缓存（进程级；limits.json 在线拉取一次，三语种共用）
+_lim_rt = ToolRuntime(store)
 # 索引按需加载
 _retriever: Retriever | None = None
 
@@ -180,6 +182,44 @@ def api_series_search(q: str = Query(...)):
     rt = ToolRuntime(store)
     cards, token = rt.search_by_series(q)
     return {"token": token, "cards": cards, "count": len(cards)}
+
+
+@app.get("/api/limits")
+def api_limits():
+    """三语种禁限卡表（简中 cn / 日文 ja / 英文 en），供前端面板按需切换。
+
+    注意：大陆玩家也常参考 OCG（ja）表，故三表全提供、由用户选择；
+    表内编号是 cid，这里额外映射出密码 id（前端点卡可开详情）。
+    """
+    try:
+        lim = _lim_rt._limits()
+    except Exception as e:  # 网络抖动时返回空表 + 错误信息，前端提示
+        return {"tables": {}, "error": f"禁限表加载失败: {e}"}
+    db = store.connect()
+    out: dict = {}
+    for lang in ("cn", "ja", "en"):
+        d = lim.get(lang) or {}
+
+        def fmt(ids):
+            rows = []
+            for cid in sorted(ids or []):
+                r = db.execute("SELECT id, cn_name FROM cards WHERE cid=?",
+                               (str(cid),)).fetchone()
+                rid = None
+                if r is not None and r["id"] is not None:
+                    try:
+                        rid = int(r["id"])
+                    except (TypeError, ValueError):
+                        rid = None
+                rows.append({"cid": int(cid), "id": rid,
+                             "name": (r["cn_name"] if r is not None else "?")})
+            return rows
+
+        out[lang] = {"date": d.get("date"),
+                     "forbidden": fmt(d.get("forbidden")),
+                     "limited": fmt(d.get("limited")),
+                     "semi_limited": fmt(d.get("semi_limited"))}
+    return {"tables": out}
 
 
 @app.post("/api/chat")

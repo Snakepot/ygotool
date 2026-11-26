@@ -47,6 +47,19 @@
       <button id="series-clear" class="ghost-btn">清空</button>
     </div>
     <div id="series-list" class="card-grid"></div>
+    <div class="sec-title">禁限卡表（简中 / 日文 / 英文）</div>
+    <div class="search-row">
+      <select id="lim-lang" title="选择禁限表">
+        <option value="cn">简中（cn）</option>
+        <option value="ja">日文（ja，OCG）</option>
+        <option value="en">英文（en）</option>
+      </select>
+      <input id="lim-filter" placeholder="按卡名/密码过滤…" autocomplete="off">
+      <button id="lim-load" class="ghost-btn">刷新</button>
+    </div>
+    <div class="sub" style="margin-top:-2px">大陆一般也参考日文 OCG 表，按需切换</div>
+    <div id="lim-info" class="sub"></div>
+    <div id="lim-list" class="card-grid"></div>
   </section>
 
   <!-- 中：聊天 -->

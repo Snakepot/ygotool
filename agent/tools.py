@@ -146,7 +146,7 @@ def _labeled_snippet(c: dict) -> str:
     lab = {"cost": "[cost]", "effect": "[effect]", "trigger": "[trigger]",
            "uncertain": "[旧措辞]", "opponent": "[对方]"}.get(c.get("reason") or "")
     sn = (c.get("snippet") or "").strip()
-    return (lab + " " + sn).strip() if sn else sn
+    return ((lab or "") + " " + sn).strip() if sn else sn
 
 
 _LEVEL_RE = re.compile(r"(\d+)星")
@@ -164,6 +164,26 @@ def _normalize_query(text: str) -> str:
     s = re.sub(r"等级\s*(\d+)", r"\1星", s)
     s = re.sub(r"星级?\s*(\d+)", r"\1星", s)
     return s
+
+
+_RANGE_TAIL = ("以下", "以上", "以内", "未满", "未満", "超过", "超过", "以内以下")
+
+
+def _mod_exact(mod: str, text: str) -> bool:
+    """限定词是否**精确**出现（「3星以下」「3星以上」不算精确限定 3 星）。
+
+    P03：用户问"等级3"，「等级3以下」的卡属通用（可自由选3星），不能进 ★精确组。
+    """
+    text = text or ""
+    if not mod:
+        return False
+    i = text.find(mod)
+    while i >= 0:
+        tail = text[i + len(mod): i + len(mod) + 3]
+        if not tail.startswith(_RANGE_TAIL):
+            return True
+        i = text.find(mod, i + 1)
+    return False
 
 
 def _query_modifiers(phrase: str) -> list[str]:
@@ -472,7 +492,7 @@ class ToolRuntime:
                     break
                 if not hit_unit:
                     continue
-                specific = bool(mods) and all(m in hit_unit["snippet"] for m in mods)
+                specific = bool(mods) and all(_mod_exact(m, hit_unit["snippet"]) for m in mods)
                 entry = {"id": r["id"], "cn_name": r["cn_name"],
                          "types": ((r["types"] or "").splitlines() or [""])[0],
                          "snippet": hit_unit["snippet"], "specific": specific}
@@ -590,7 +610,7 @@ class ToolRuntime:
             t = matched[0]
             # 精确档位：来源一致(2) / 来源更宽(1) / 通用(0)，并与限定词档取较小值
             mod_units = [u for u in matched
-                         if all(m in (u.get("clause") or "") for m in mods)]
+                         if all(_mod_exact(m, u.get("clause") or "") for m in mods)]
             mod_ok = (not mods) or bool(mod_units)
             if q_zone_keys:
                 uzones = set(mod_units[0].get("zones") or []) if mod_units else set()

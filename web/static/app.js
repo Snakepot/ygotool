@@ -170,6 +170,53 @@ $("series-btn").onclick = doSeriesSearch;
 $("series-clear").onclick = () => { $("series-input").value = ""; $("series-list").innerHTML = ""; };
 $("series-input").addEventListener("keydown", e => { if (e.key === "Enter") doSeriesSearch(); });
 
+// ---------- 禁限卡表（简中/日文/英文三表，按需切换） ----------
+let limData = null;
+async function loadLimits(force) {
+  if (!force && limData) { renderLimits(); return; }
+  const el = $("lim-list"); showSkeleton(el, 4);
+  try {
+    const d = await (await fetch("/api/limits")).json();
+    if (d.error) { emptyState(el, d.error); return; }
+    limData = d.tables || {};
+  } catch (e) { emptyState(el, "禁限表加载失败（网络异常？）"); return; }
+  renderLimits();
+}
+function renderLimits() {
+  const lang = $("lim-lang").value;
+  const t = (limData || {})[lang];
+  const el = $("lim-list"); el.innerHTML = "";
+  const info = $("lim-info");
+  if (!t) { emptyState(el, "无数据"); info.textContent = ""; return; }
+  const kw = $("lim-filter").value.trim();
+  info.textContent = `${lang} 表 · ${t.date || "?"} · 禁${(t.forbidden || []).length} 限${(t.limited || []).length} 准限${(t.semi_limited || []).length}`;
+  const groups = [["禁卡", t.forbidden || []], ["限制", t.limited || []],
+                  ["准限制", t.semi_limited || []]];
+  for (const [title, cards] of groups) {
+    const list = cards.filter(c => !kw
+      || (c.name && c.name.includes(kw))
+      || String(c.id || "").includes(kw) || String(c.cid || "").includes(kw));
+    if (!list.length) continue;
+    const h = document.createElement("div"); h.className = "sub";
+    h.innerHTML = `<b>${title}（${list.length}）</b>`;
+    el.appendChild(h);
+    list.forEach(c => {
+      const d = document.createElement("div"); d.className = "card-item";
+      const first = (c.name || "?").trim().charAt(0) || "?";
+      d.innerHTML = `<span class="thumb">${esc(first)}</span>`
+        + `<span class="card-main"><span class="name">${esc(c.name)}</span>`
+        + `<span class="sub">${c.id ? "#" + esc(String(c.id)) + " · " : ""}cid ${esc(String(c.cid))}</span></span>`;
+      if (c.id) d.onclick = () => showCard(c.id);
+      el.appendChild(d);
+    });
+  }
+  if (!el.children.length) emptyState(el, "该表暂无匹配");
+}
+$("lim-lang").onchange = renderLimits;
+$("lim-filter").oninput = () => { if (limData) renderLimits(); };
+$("lim-load").onclick = () => loadLimits(true);
+loadLimits();
+
 // 答案里卡牌#id 可点（事件委托）
 $("messages").addEventListener("click", e => {
   const a = e.target.closest("a.cardref");
