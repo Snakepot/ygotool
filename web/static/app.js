@@ -72,10 +72,18 @@ fetch("/api/params").then(r => r.json()).then(p => {
 $("collapse-btn").onclick = () => $("params").classList.toggle("collapsed");
 
 // ---------- 卡牌浏览（模态） ----------
+// 非阻塞提示（替代 alert：不打断操作，几秒后淡出）
+function toast(msg, ms = 2600) {
+  const d = document.createElement("div");
+  d.className = "toast show";
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => { d.classList.add("hide"); setTimeout(() => d.remove(), 300); }, ms);
+}
 async function showCard(id) {
   try {
     const r = await fetch(`/api/card/${id}?faq=1`);
-    if (!r.ok) { alert("未找到该卡"); return; }
+    if (!r.ok) { toast(`未找到该卡（#${id}）——可能引用的是内部 cid 或不存在的编号`); return; }
     const c = await r.json();
     const first = (c.cn_name || "?").trim().charAt(0) || "?";
     let h = `<div class="modal-head"><span class="thumb modal-thumb">${esc(first)}</span>`
@@ -88,7 +96,7 @@ async function showCard(id) {
     }
     $("modal-body").innerHTML = h;
     $("card-modal").hidden = false;
-  } catch (e) { alert("加载失败: " + e); }
+  } catch (e) { toast("加载失败: " + e); }
 }
 $("modal-close").onclick = () => $("card-modal").hidden = true;
 document.querySelector(".modal-backdrop").onclick = () => $("card-modal").hidden = true;

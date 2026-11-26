@@ -123,7 +123,11 @@ def api_search(q: str = Query(...), limit: int = Query(10, ge=1, le=50)):
 def api_card(card_id: int, faq: bool = False):
     c = store.get_by_id(card_id)
     if not c:
+        # 容错：答案里可能引用 cid（内部编号）而不是密码 id
+        c = store.get_by_cid(card_id)
+    if not c:
         raise HTTPException(404, f"未找到 id={card_id}")
+    real_id = c.get("id")
     dec = decode_card(c["data"])
     text = c["text"]
     data = {
@@ -134,7 +138,7 @@ def api_card(card_id: int, faq: bool = False):
         "desc": text.get("desc", ""), "decoded": dec,
     }
     if faq:
-        d = store.fetch_detail(card_id)
+        d = store.fetch_detail(real_id) if real_id is not None else None
         faqs = (d.get("faqs") or []) if d else []
         data["faqcount"] = len(faqs)
         data["faqs"] = [

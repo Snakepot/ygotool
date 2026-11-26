@@ -230,7 +230,11 @@ class ToolRuntime:
         self._id2cid: dict | None = None
 
     def _cid_of(self, card_id) -> int | None:
-        """密码 id → cid（禁限表用的是 cid，不是密码 id；见踩坑 #34）。"""
+        """密码 id → cid（禁限表用的是 cid，不是密码 id；见踩坑 #34）。
+
+        注意：store.connect() 返回的是**共享连接**（进程级 self._db），这里不能
+        close（否则后续所有 DB 操作报 "Cannot operate on a closed database"）。
+        """
         try:
             card_id = int(card_id)
         except (TypeError, ValueError):
@@ -238,16 +242,13 @@ class ToolRuntime:
         if self._id2cid is None:
             db = self.store.connect()
             self._id2cid = {}
-            try:
-                for r in db.execute("SELECT id, cid FROM cards"):
-                    if r["id"] is None or r["cid"] is None:
-                        continue
-                    try:
-                        self._id2cid[int(r["id"])] = int(r["cid"])
-                    except (TypeError, ValueError):
-                        continue
-            finally:
-                db.close()
+            for r in db.execute("SELECT id, cid FROM cards"):
+                if r["id"] is None or r["cid"] is None:
+                    continue
+                try:
+                    self._id2cid[int(r["id"])] = int(r["cid"])
+                except (TypeError, ValueError):
+                    continue
         return self._id2cid.get(card_id)
 
     # ---- 工具实现 ----
@@ -305,7 +306,19 @@ class ToolRuntime:
 
         card_id 是**密码 id**（工具 schema 约定）；禁限表存的是 cid，
         先用本地 cards 表映射 id→cid 再比对（踩坑 #34）。
+        lang 只支持 cn/ja/en（ygocdb 只提供这三张表）——其它语言明确拒绝，
+        避免模型把「不支持」误当成「无限制」。
         """
+        lang = (lang or "cn").strip().lower()
+        if lang in ("jp", "japan", "日本語", "日文"):
+            lang = "ja"
+        elif lang in ("sc", "zh", "zh-cn", "简中", "中文"):
+            lang = "cn"
+        elif lang in ("us", "na", "英文", "英语"):
+            lang = "en"
+        if lang not in ("cn", "ja", "en"):
+            return (f"不支持的语言「{lang}」——禁限表只有 cn(简中)/ja(日文)/en(英文) 三张；"
+                    "不要为其它语言编造状态。")
         d = self._limits().get(lang, {})
         cid = self._cid_of(card_id)
         try:
@@ -902,9 +915,11 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "limit_status",
-        "description": "查某卡在指定语种的禁限状态（禁卡/限制/准限制/无限制）。",
+        "description": "查某卡在指定语种的禁限状态（禁卡/限制/准限制/无限制）。lang 仅支持 cn(简中)/ja(日文)/en(英文) 三张表；其它语言不存在，不要编造。",
         "parameters": {"type": "object",
-                       "properties": {"card_id": {"type": "integer"}, "lang": {"type": "string", "default": "cn"}},
+                       "properties": {"card_id": {"type": "integer", "description": "卡牌密码 id"},
+                                      "lang": {"type": "string", "enum": ["cn", "ja", "en"], "default": "cn",
+                                               "description": "cn=简中 / ja=日文(OCG) / en=英文；仅这三个"}},
                        "required": ["card_id"]}}},
     {"type": "function", "function": {
         "name": "get_release_date",
