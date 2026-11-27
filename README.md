@@ -43,6 +43,9 @@ ygotool agent "问题" [--task ruling] [--k 8] [--few-shots 2]          # 问答
 ygotool serve [--host 127.0.0.1] [--port 8000]                        # Web 界面（SSE 流式 + trace）
 ```
 
+> **首次使用顺序**：`refresh`（拉卡池）→ `build-index`（效果索引）→（可选，很慢/耗 API）`build-faq-index` → `serve`。
+> 缺索引时裁定/构筑质量会明显变弱；无 `LLM_API_KEY` 时自动 mock 后端，可先离线跑通全链路。
+
 ## 学习点导览
 
 | 学习点 | 看哪里 | 怎么观察 |
@@ -52,7 +55,7 @@ ygotool serve [--host 127.0.0.1] [--port 8000]                        # Web 界�
 | **Temperature** | `agent/llm.py` + `examples/03` | 温度扫描的多样性与 token 变化 |
 | **Token 控制** | `agent/budget.py` + `examples/04` | 预算扫描看检索被裁到几个 |
 | **工具降幻觉** | `agent/tools.py` + `agent/agent.py` | Agent 必先调工具拉真实数据再答 |
-| **评测闭环** | `eval/run.py` + `agent/data/cases.jsonl` | 7 判例 → LLM-as-judge 正确率 + must_cite 引用率 |
+| **评测闭环** | `eval/run.py` + `agent/data/cases.jsonl` | 15 判例 → LLM-as-judge 正确率 + must_cite 引用率 |
 | **微调数据导出**（预留） | `examples/` | AB 层是 C 层微调的"前一步"：数据构造→few-shot→评测链路在此可复现 |
 
 ### 运行示例（默认零依赖、离线可跑）
