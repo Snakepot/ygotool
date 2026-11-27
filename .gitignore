@@ -36,3 +36,4 @@ docs/agent-concepts-review.md
 Thumbs.db
 # Word 临时锁文件
 ~$*
+.ssh-push/

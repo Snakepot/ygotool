@@ -73,6 +73,6 @@ git checkout v0.1.0 -- web/server.py    # 把某版本下某文件取回到工�
   git push ssh://git@ssh.github.com:443/Snakepot/ygotool.git main
   git push ssh://git@ssh.github.com:443/Snakepot/ygotool.git --tags
   ```
-- SSH key：`C:\Users\Eric\.ssh\id_ed25519`（权限已收紧为仅本人 FullControl；`known_hosts` 首次连接自动写入）。
+- SSH key：`~/.ssh/id_ed25519`（权限收紧为仅本人可读；`known_hosts` 首次连接自动写入）。
 - **注意**：git 推标签/推送会经 Git-for-Windows 的 `sh.exe` 启动 ssh，受限沙箱会禁止它建管道（`couldn't create signal pipe`）——推送需要在完整访问模式（或普通终端）里跑，别在受限环境里反复重试。
-- 远程当前状态：`main` 领先本地 4 个提交（P0/P1/C23 修复，未发版）；`v0.1.0–v0.1.6` 标签待推。
+- 远程当前状态：本地 `main` 领先远端若干提交（未发版），`v0.1.0–v0.1.6` 标签待推；推送前先确认远端与本地的差异。
